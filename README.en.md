@@ -24,7 +24,7 @@ Phone QQ  ──►  QQ Open Platform  ──►  dsh-qq plugin  ──►  DSH 
 | Images, both directions | Inbound images are inlined for the model; outbound supports screenshots and images |
 | Files, both directions | Inbound attachments are written to disk and their path is given to the agent; outbound supports arbitrary files (reports, logs, diffs) |
 | Session and workspace management | `/sessions` shows titles and hides archived sessions; `/workspace` is a numbered menu; `/new <n>` switches project and opens a conversation in one step |
-| Balance and usage | `/usage` shows provider balances, subscription windows, and today's tokens and cost |
+| Balance and usage | `/usage` shows provider balances, subscription windows, recent average daily spend with the days it covers, and today's tokens and cost |
 | Screenshots | `/screen` captures the full screen or one window; a `qq_send_screenshot` tool is available to the agent |
 | Remote restart | `/restart` restarts the process from a chat message and sends the new address of the replacement process back to the conversation |
 | Crash recovery | A watchdog installed beside the launcher brings the server back within 60 seconds and records the time and circumstances of the failure |
@@ -112,7 +112,7 @@ Send these in QQ. Anything not starting with `/` is delivered to the agent as or
 | `/workspace <n\|path>` | Switch the working directory for new sessions (owner only) |
 | `/sessions [count]` | List recent sessions with titles, excluding archived ones |
 | `/resume <n\|session id>` | Rebind this conversation to an existing session (owner only) |
-| `/usage` | Balances, subscription windows, and today's tokens and cost |
+| `/usage` | Balances, subscription windows, recent daily spend and remaining days, and today's tokens and cost |
 | `/screen [process]` | Capture the screen and send it here (owner only) |
 | `/restart`, `/restart force` | Restart the DSH process (owner only; `force` is required while a turn is running) |
 
