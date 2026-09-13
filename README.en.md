@@ -85,6 +85,7 @@ The `deny` list takes precedence over admission in both modes.
 | Setting | Default | Meaning |
 |---|---|---|
 | `busyDelivery` | `steer` | How a message arriving mid-turn is delivered; `/steer` and `/queue` override it per message |
+| `markdownMode` | `auto` | Message encoding: `auto` uses markdown whenever the platform renders it faithfully (tables excepted, since QQ does not render them, and those fall back to plain text), `always` forces it, `never` converts everything |
 | `progressIntervalMs` | `0` (off) | Interval for long-turn progress updates. Every update is a real message and spends send quota |
 | `lowBalanceThreshold` | `5` | Warn once a day below this balance; `0` disables the warning |
 | `workspacePath` | empty | Working directory for new QQ sessions; empty uses the DSH process directory |

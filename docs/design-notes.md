@@ -54,7 +54,7 @@ DSH 的 `/api` 对每个请求强制校验签名 Cookie（`dsh-client-connection
 - **`render_data.label` 上限为 10 个字符**，而模型 id 通常超出该限制（`deepseek-v4.1-flash` 为 19 字符）。因此按钮仅显示页码内稳定的编号，实际标识存放于无长度限制的 `action.data`，编号与模型的对应关系由消息正文给出。
 - **按钮 payload 使用绝对标识而非位置标识。** 采用 `model|<provider>|<model>` 而非 `model|#<索引>`。模型目录是动态的，若某个提供方中途消失，位置标识会导致整体错位，使用户切换到非预期的模型。
 - **按钮点击需单独订阅 Intent。** 网关默认仅订阅 `GROUP_AND_C2C_EVENT (1<<25)`，无法接收 `INTERACTION_CREATE`，需订阅 `INTERACTION (1<<26)`。缺失时表现为键盘可正常下发但点击无响应。
-- **键盘仅能挂载于 markdown 消息。** 同一个键盘挂载于 `msg_type: 0` 的纯文本消息时，平台接受请求但不渲染按钮；改为 `msg_type: 2` 后立即生效。因此带键盘的消息强制使用 markdown，`useMarkdown` 设置仅作用于不带按钮的消息。
+- **键盘仅能挂载于 markdown 消息。** 同一个键盘挂载于 `msg_type: 0` 的纯文本消息时，平台接受请求但不渲染按钮；改为 `msg_type: 2` 后立即生效。因此带键盘的消息强制使用 markdown，`markdownMode` 设置仅作用于不带按钮的消息。
 - **点击必须被回应。** 收到 `INTERACTION_CREATE` 后需调用 `PUT /interactions/{interaction_id}`（body 为 `{code}`，取值 0 表示成功、1 表示失败、4 表示无权限）。同一 id 仅能回应一次，超时不补。仅发送消息不构成回应。回应码显示于 QQ 客户端，因此权限不足时应返回 4 而非 0。
 
 **一次点击涉及两个 id，不可混用。** 事件体中的 `d.id` 是互动 id，仅用于 `PUT /interactions/{id}`；被动回复所用的 `event_id` 取自事件最外层的 id（WebSocket 帧自身的 `id`，形如 `INTERACTION_CREATE:<uuid>`）。将互动 id 用作 `msg_id` 会得到 `40034024 请求参数msg_id无效或越权`；将 `d.id` 用作 `event_id` 会得到 `40034025 请求参数event_id无效`。帧 id 仅在传输层可见，因此 `Gateway` 将其作为第三个参数传递至 `normalizeInteraction`，交互对象同时携带 `interactionId` 与 `eventId`。

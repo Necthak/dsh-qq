@@ -179,7 +179,9 @@ test('a reply refused as expired is retried as an active message', async () => {
       },
       sessions,
       log: () => {},
-      config: () => ({}),
+      // This case is about the retry, not the encoding: plain text keeps the
+      // assertion about the delivered body readable.
+      config: () => ({ markdownMode: 'never' }),
     })
 
     await outbound.deliver({ key: 'group:G1', kind: 'group', peerId: 'G1', text: '你好' })

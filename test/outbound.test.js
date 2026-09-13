@@ -43,7 +43,9 @@ function harness(config = {}, { failOnce = null } = {}) {
     api,
     sessions,
     log: () => {},
-    config: () => ({ intervalMs: 0, maxBytes: 3_500, useMarkdown: false, ...config }),
+    // `never` keeps this suite on the plain-text path, which is a supported
+    // configuration in its own right; the automatic choice has its own tests.
+    config: () => ({ intervalMs: 0, maxBytes: 3_500, markdownMode: 'never', ...config }),
   })
   return { api, sessions, outbound, cleanup: () => rmSync(dir, { recursive: true, force: true }) }
 }
@@ -143,8 +145,8 @@ test('sends to one conversation stay ordered even when issued concurrently', asy
   }
 })
 
-test('markdown is converted to plain text by default', async () => {
-  const h = harness()
+test('mode never converts markdown to plain text', async () => {
+  const h = harness({ markdownMode: 'never' })
   try {
     await h.outbound.sendActive({ key: 'private:U1', kind: 'private', peerId: 'U1', text: '## 标题\n- 项目' })
     assert.equal(h.api.sent[0].body.content, '【标题】\n· 项目')
@@ -153,8 +155,35 @@ test('markdown is converted to plain text by default', async () => {
   }
 })
 
+test('mode auto sends prose as markdown but a table as plain text', async () => {
+  // The platform renders bold, italics, lists, quotes and rules, but not
+  // tables: a table sent as markdown arrives as a row of pipe characters, so
+  // the plain-text conversion is the better encoding for exactly that case.
+  const h = harness({ markdownMode: 'auto' })
+  try {
+    await h.outbound.sendActive({ key: 'private:U1', kind: 'private', peerId: 'U1', text: '## 标题\n\n- 一\n- **重点**' })
+    assert.equal(h.api.sent[0].body.msg_type, MSG_TYPE.markdown, 'prose is rendered')
+    assert.match(h.api.sent[0].body.markdown.content, /## 标题/, 'and keeps its syntax')
+
+    await h.outbound.sendActive({ key: 'private:U1', kind: 'private', peerId: 'U1', text: '| 项 | 值 |\n|---|---|\n| a | 1 |' })
+    assert.equal(h.api.sent[1].body.msg_type, MSG_TYPE.text, 'a table falls back to plain text')
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('a sentence containing a pipe is not mistaken for a table', async () => {
+  const h = harness({ markdownMode: 'auto' })
+  try {
+    await h.outbound.sendActive({ key: 'private:U1', kind: 'private', peerId: 'U1', text: '用法是 a | b，中间是管道符' })
+    assert.equal(h.api.sent[0].body.msg_type, MSG_TYPE.markdown)
+  } finally {
+    h.cleanup()
+  }
+})
+
 test('markdown mode sends msg_type 2 with a markdown body', async () => {
-  const h = harness({ useMarkdown: true })
+  const h = harness({ markdownMode: 'always' })
   try {
     await h.outbound.sendActive({ key: 'private:U1', kind: 'private', peerId: 'U1', text: '## 标题' })
     assert.equal(h.api.sent[0].body.msg_type, MSG_TYPE.markdown)
@@ -218,7 +247,7 @@ test('a keyboard forces markdown, because buttons do not render on plain text', 
 })
 
 test('a keyboard-less message still follows the markdown setting', async () => {
-  const h = harness({ useMarkdown: false })
+  const h = harness({ markdownMode: 'never' })
   try {
     await h.outbound.deliver({ key: 'private:U1', kind: 'private', peerId: 'U1', text: '普通消息' })
     assert.equal(h.api.sent[0].body.msg_type, MSG_TYPE.text)

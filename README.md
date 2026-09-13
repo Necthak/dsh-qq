@@ -85,6 +85,7 @@ cd dsh-qq && npm install
 | 设置 | 默认值 | 说明 |
 |---|---|---|
 | `busyDelivery` | `steer` | 运行中收到消息的投递方式；单条消息可用 `/steer`、`/queue` 覆盖 |
+| `markdownMode` | `auto` | 消息编码：`auto` 在平台能忠实渲染时使用 markdown（表格除外，QQ 不渲染表格，会退回纯文本），`always` 强制，`never` 全部转纯文本 |
 | `progressIntervalMs` | `0`（关闭） | 长回合进度推送间隔。每条推送均为真实消息，会消耗发送额度 |
 | `lowBalanceThreshold` | `5` | 余额低于此值时每日提醒一次；`0` 表示关闭 |
 | `workspacePath` | 空 | QQ 新建会话的工作目录；为空时使用 DSH 进程目录 |
