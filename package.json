@@ -1,0 +1,44 @@
+{
+  "name": "dsh-qq",
+  "version": "0.1.0",
+  "private": true,
+  "description": "QQ official bot bridge for DeepSeek Harness: QQ messages become DSH agent prompts, and agent replies, approvals, and questions travel back to QQ.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web"
+    }
+  },
+  "files": [
+    "lib/index.js",
+    "lib/client.js",
+    "lib/qq",
+    "lib/bridge",
+    "lib/md-to-plain.js",
+    "lib/console.js",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test \"test/*.test.js\""
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@deepseek-ai/dsh-tools": "^0.1.5-rc.2",
+    "@deepseek-ai/schemastery": "^3.18.2",
+    "@tencent-connect/qqbot-connector": "^1.2.0",
+    "qrcode": "^1.5.4"
+  }
+}

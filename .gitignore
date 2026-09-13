@@ -1,0 +1,11 @@
+# Dependencies
+node_modules/
+
+# Local runtime state that must never be committed
+*.log
+.dsh-qq-*
+
+# Editor / OS noise
+.vscode/
+Thumbs.db
+Desktop.ini

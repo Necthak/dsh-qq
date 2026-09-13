@@ -1,0 +1,828 @@
+/**
+ * Command surface and delivery guarantees.
+ *
+ * Two classes of defect are covered here, both of which used to be invisible
+ * from QQ:
+ *
+ * - A send that failed (or had nothing to send) resolved as success, so a
+ *   question prompt that never reached the phone looked delivered.
+ * - The answer slot opened only after the prompt finished sending, so a fast
+ *   reply could arrive while the slot was still closed.
+ *
+ * The commands themselves are covered through the same handler the bridge
+ * wires, so the tests exercise the routing rather than the bodies alone.
+ */
+
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import { SessionMap } from '../lib/bridge/sessions.js'
+import { PendingInteractions } from '../lib/bridge/pending.js'
+import { createInboundHandler } from '../lib/bridge/inbound.js'
+import { createSessionCommands, formatUsage, sessionLabel } from '../lib/bridge/commands.js'
+import { Outbound } from '../lib/bridge/outbound.js'
+import { registerQuestionAnswerer } from '../lib/bridge/questions.js'
+import { registerApprovalAnswerer } from '../lib/bridge/approvals.js'
+
+/** A normalized private message. */
+function message(overrides = {}) {
+  return {
+    kind: 'private',
+    peerId: 'OWNER',
+    userId: 'OWNER',
+    userName: '甲',
+    messageId: 'ROBOT1.0_abc',
+    text: 'hi',
+    attachments: [],
+    ark: '',
+    ...overrides,
+  }
+}
+
+/** One recorded send. */
+function recorder() {
+  const sent = []
+  return {
+    sent,
+    sink: {
+      deliver: async (job) => { sent.push({ via: 'deliver', ...job }) },
+      sendActive: async (job) => { sent.push({ via: 'sendActive', ...job }) },
+    },
+  }
+}
+
+/**
+ * Build an inbound handler with a scripted Host.
+ *
+ * @param options - sessions to bind, settings, and scripted Host answers.
+ * @returns The handler plus the collaborators a test asserts on.
+ */
+function harness({ settings = {}, bindings = [], sessionsList = [], cancelResult = { accepted: true }, scope, restart, busy, usage, screenshot, projects = [], archived = [] } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-qq-cmd-'))
+  const sessions = new SessionMap({ path: join(dir, 'sessions.json'), log: () => {} })
+  for (const [key, sessionId] of bindings) sessions.bind(key, sessionId)
+
+  const out = recorder()
+  const updates = []
+  const cancels = []
+  const controller = new AbortController()
+
+  const ctx = {
+    get: (service) => {
+      if (service !== 'workspaceRegistry') return undefined
+      return { list: () => projects, archivedSessionIds: archived }
+    },
+    sessionController: {
+      prompt: async () => { throw new Error('a command must never reach the agent') },
+      list: async () => ({ items: sessionsList }),
+      cancel: async (request) => { cancels.push(request); return cancelResult },
+    },
+  }
+
+  const commands = createSessionCommands({
+    ctx,
+    sessions,
+    pending: new PendingInteractions({ log: () => {} }),
+    settingsScope: scope === undefined ? { update: async (patch) => { updates.push(patch) } } : scope,
+    restart,
+    busy,
+    usage,
+    screenshot,
+    log: () => {},
+  })
+
+  const handler = createInboundHandler({
+    ctx,
+    sessions,
+    outbound: out.sink,
+    pending: new PendingInteractions({ log: () => {} }),
+    commands,
+    config: () => ({ mode: 'closed-agent', ownerOpenId: 'OWNER', ...settings }),
+    log: () => {},
+    ensureSession: async () => 'sess_1',
+    status: () => ({}),
+    signal: controller.signal,
+  })
+
+  return { handler, ...out, updates, cancels, sessions, cleanup: () => rmSync(dir, { recursive: true, force: true }) }
+}
+
+// ── delivery is a fact, not an assumption ───────────────────────────────────
+
+test('a failed send rejects instead of reporting success', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-qq-out-'))
+  try {
+    const sessions = new SessionMap({ path: join(dir, 'sessions.json'), log: () => {} })
+    sessions.bind('private:OWNER', 'sess_1')
+    const delivered = []
+    const outbound = new Outbound({
+      api: { sendC2C: async () => { throw new Error('platform said no') } },
+      sessions,
+      log: () => {},
+      config: () => ({}),
+    })
+
+    await assert.rejects(
+      () => outbound.sendActive({ key: 'private:OWNER', kind: 'private', peerId: 'OWNER', text: 'hi' }),
+      /platform said no/,
+    )
+    assert.equal(outbound.lastFailure?.message, 'platform said no')
+    assert.equal(delivered.length, 0)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('an empty body is a failure rather than a silent no-op', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-qq-out-'))
+  try {
+    const sessions = new SessionMap({ path: join(dir, 'sessions.json'), log: () => {} })
+    sessions.bind('private:OWNER', 'sess_1')
+    const outbound = new Outbound({ api: { sendC2C: async () => {} }, sessions, log: () => {}, config: () => ({}) })
+
+    await assert.rejects(
+      () => outbound.sendActive({ key: 'private:OWNER', kind: 'private', peerId: 'OWNER', text: '' }),
+      /内容为空/,
+    )
+    assert.equal(outbound.lastFailure?.message, '消息内容为空，未发送')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a reply refused as expired is retried as an active message', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-qq-out-'))
+  try {
+    const sessions = new SessionMap({ path: join(dir, 'sessions.json'), log: () => {} })
+    sessions.bind('group:G1', 'sess_1')
+    sessions.setReplyTarget('group:G1', 'MSG1')
+
+    const bodies = []
+    const outbound = new Outbound({
+      api: {
+        sendGroup: async (_peer, body) => {
+          bodies.push(body)
+          // The platform refuses the passive form once its five-minute window
+          // has closed, even though the local reply counter still has room.
+          if (body.msg_id !== undefined) throw new Error('QQ POST ... failed: msgid已经过期,不能回复')
+        },
+      },
+      sessions,
+      log: () => {},
+      config: () => ({}),
+    })
+
+    await outbound.deliver({ key: 'group:G1', kind: 'group', peerId: 'G1', text: '你好' })
+
+    assert.equal(bodies.length, 2, 'the passive attempt is followed by an active one')
+    assert.equal(bodies[0].msg_id, 'MSG1')
+    assert.equal(bodies[1].msg_id, undefined, 'the retry must not carry the dead target')
+    assert.equal(bodies[1].content, '你好')
+    assert.equal(outbound.lastFailure, null)
+    assert.equal(sessions.get('group:G1').replyToMessageId, '', 'the dead target is forgotten')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a successful send clears the recorded failure', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-qq-out-'))
+  try {
+    const sessions = new SessionMap({ path: join(dir, 'sessions.json'), log: () => {} })
+    sessions.bind('private:OWNER', 'sess_1')
+    let fail = true
+    const outbound = new Outbound({
+      api: { sendC2C: async () => { if (fail) throw new Error('boom') } },
+      sessions,
+      log: () => {},
+      config: () => ({}),
+    })
+
+    await assert.rejects(() => outbound.sendActive({ key: 'private:OWNER', kind: 'private', peerId: 'OWNER', text: 'hi' }))
+    assert.notEqual(outbound.lastFailure, null)
+
+    fail = false
+    await outbound.sendActive({ key: 'private:OWNER', kind: 'private', peerId: 'OWNER', text: 'hi' })
+    assert.equal(outbound.lastFailure, null)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// ── the answer slot is open before the prompt is sent ───────────────────────
+
+test('a question answer arriving while the prompt is still queueing is accepted', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-qq-q-'))
+  try {
+    const sessions = new SessionMap({ path: join(dir, 'sessions.json'), log: () => {} })
+    sessions.bind('private:OWNER', 'sess_1')
+    const pending = new PendingInteractions({ log: () => {} })
+
+    let releaseSend
+    const gate = new Promise((resolve) => { releaseSend = resolve })
+    const sent = []
+    const ctx = {
+      on: (name, handler, options) => { ctx.handlers[name] = handler; ctx.options[name] = options; return () => {} },
+      handlers: {},
+      options: {},
+    }
+
+    registerQuestionAnswerer({
+      ctx,
+      sessions,
+      outbound: {
+        deliver: async (job) => { sent.push(job); await gate },
+        sendActive: async () => { throw new Error('a question prompt must use the passive-capable path') },
+      },
+      pending,
+      config: () => ({}),
+      log: () => {},
+    })
+
+    // Without `prepend` the Remote bridge that feeds the desktop registers
+    // first and claims the request, so this answerer would never run at all.
+    assert.equal(ctx.options['user-questions/request']?.prepend, true)
+
+    const questions = [{ id: 'q1', question: '选哪个？', options: [{ label: '甲' }, { label: '乙' }] }]
+    const answer = ctx.handlers['user-questions/request'](
+      { questions, agent: { session: { id: 'sess_1' } } },
+      async () => { throw new Error('the desktop must not be the only answerer') },
+    )
+
+    // The prompt is still in flight; the operator answers anyway.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    assert.equal(pending.size, 1, 'the slot is open before the send completes')
+    assert.equal(pending.offer('private:OWNER', '2'), true)
+
+    releaseSend()
+    const resolved = await answer
+    assert.deepEqual(resolved, { answers: [{ id: 'q1', selected: ['乙'] }] })
+    assert.equal(sent.length, 1)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('an undeliverable question prompt delegates to the desktop instead of waiting', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-qq-q-'))
+  try {
+    const sessions = new SessionMap({ path: join(dir, 'sessions.json'), log: () => {} })
+    sessions.bind('private:OWNER', 'sess_1')
+    const pending = new PendingInteractions({ log: () => {} })
+    const ctx = {
+      on: (name, handler, options) => { ctx.handlers[name] = handler; ctx.options[name] = options; return () => {} },
+      handlers: {},
+      options: {},
+    }
+
+    registerQuestionAnswerer({
+      ctx,
+      sessions,
+      outbound: { deliver: async () => { throw new Error('channel offline') } },
+      pending,
+      config: () => ({}),
+      log: () => {},
+    })
+
+    const result = await ctx.handlers['user-questions/request'](
+      { questions: [{ id: 'q1', question: '选哪个？' }], agent: { session: { id: 'sess_1' } } },
+      async () => ({ answers: [{ id: 'q1', selected: ['桌面答案'] }] }),
+    )
+    assert.deepEqual(result, { answers: [{ id: 'q1', selected: ['桌面答案'] }] })
+    assert.equal(pending.size, 0, 'a prompt that never arrived must not hold the slot')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a question for an unbound session declines loudly, not silently', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-qq-q-'))
+  try {
+    const sessions = new SessionMap({ path: join(dir, 'sessions.json'), log: () => {} })
+    const lines = []
+    const ctx = {
+      on: (name, handler, options) => { ctx.handlers[name] = handler; ctx.options[name] = options; return () => {} },
+      handlers: {},
+      options: {},
+    }
+
+    registerQuestionAnswerer({
+      ctx,
+      sessions,
+      outbound: { deliver: async () => { throw new Error('must not send for an unbound session') } },
+      pending: new PendingInteractions({ log: () => {} }),
+      config: () => ({}),
+      log: (line) => lines.push(line),
+    })
+
+    const desktop = { answers: [{ id: 'q1', selected: ['桌面'] }] }
+    const result = await ctx.handlers['user-questions/request'](
+      { questions: [{ id: 'q1', question: '选哪个？' }], agent: { session: { id: 'session-not-ours' } } },
+      async () => desktop,
+    )
+
+    assert.deepEqual(result, desktop)
+    assert.equal(lines.length, 1, 'declining must leave a trace')
+    assert.match(lines[0], /not bound to a QQ conversation/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('an approval prompt also prefers the passive-capable path', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-qq-a-'))
+  try {
+    const sessions = new SessionMap({ path: join(dir, 'sessions.json'), log: () => {} })
+    sessions.bind('private:OWNER', 'sess_1')
+    const sent = []
+    const ctx = {
+      on: (name, handler, options) => { ctx.handlers[name] = handler; ctx.options[name] = options; return () => {} },
+      handlers: {},
+      options: {},
+    }
+
+    registerApprovalAnswerer({
+      ctx,
+      sessions,
+      outbound: {
+        deliver: async (job) => { sent.push(job) },
+        sendActive: async () => { throw new Error('approvals must use deliver') },
+      },
+      pending: new PendingInteractions({ log: () => {} }),
+      config: () => ({ approvalTimeoutMs: 20 }),
+      log: () => {},
+    })
+
+    const request = { agent: { session: { id: 'sess_1' } }, toolName: 'bash' }
+    const handler = ctx.handlers['approval/request']
+
+    // The QQ slot expires long before the desktop answers, which is the case
+    // that must hand the decision back rather than strand the turn.
+    const desktopAnswer = { kind: 'desktop' }
+    const decision = await handler(request, async () => {
+      await new Promise((resolve) => setTimeout(resolve, 60))
+      return desktopAnswer
+    })
+
+    assert.deepEqual(decision, desktopAnswer, 'an expired QQ slot delegates instead of deciding')
+    assert.equal(sent.length, 1)
+    assert.match(sent[0].text, /工具审批请求/)
+    assert.match(sent[0].text, /bash/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// ── workspace, sessions, resume, stop ───────────────────────────────────────
+
+test('/workspace lists the registered projects and the bound session directory', async () => {
+  const h = harness({
+    bindings: [['private:OWNER', 'session-aaaa1111bbbb']],
+    settings: { workspacePath: 'C:\\work' },
+    sessionsList: [{ sessionId: 'session-aaaa1111bbbb', updatedAt: 1, cwd: 'C:\\work' }],
+    projects: [
+      { path: 'C:\\work', title: '工作' },
+      { path: 'D:\\play', title: '折腾' },
+    ],
+  })
+  try {
+    await h.handler(message({ text: '/workspace' }))
+    const body = h.sent[0].text
+    assert.match(body, /1\. 工作 · C:\\work ←/, 'the configured project is marked')
+    assert.match(body, /2\. 折腾 · D:\\play/)
+    assert.match(body, /当前会话目录：C:\\work/)
+    assert.match(body, /切换只影响\*\*新\*\*会话/)
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('/workspace <编号> picks a listed project so a phone never types a path', async () => {
+  const h = harness({
+    bindings: [['private:OWNER', 'sess_1']],
+    projects: [
+      { path: 'C:\\work', title: '工作' },
+      { path: 'D:\\play', title: '折腾' },
+    ],
+  })
+  try {
+    await h.handler(message({ text: '/workspace' }))
+    await h.handler(message({ text: '/workspace 2', messageId: 'm2' }))
+    assert.deepEqual(h.updates, [{ workspacePath: 'D:\\play' }])
+    assert.match(h.sent.at(-1).text, /已设为：D:\\play/)
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('/workspace with an out-of-range number refuses instead of guessing a path', async () => {
+  const h = harness({ bindings: [['private:OWNER', 'sess_1']], projects: [{ path: 'C:\\work', title: '工作' }] })
+  try {
+    await h.handler(message({ text: '/workspace' }))
+    await h.handler(message({ text: '/workspace 7', messageId: 'm2' }))
+    assert.deepEqual(h.updates, [], 'a directory literally named 7 is not what anyone means')
+    assert.match(h.sent.at(-1).text, /不在上次列出的工作区范围内/)
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('/workspace <path> writes the setting and says when it applies', async () => {
+  const h = harness()
+  try {
+    await h.handler(message({ text: '/workspace D:\\projects\\我的 项目' }))
+    assert.deepEqual(h.updates, [{ workspacePath: 'D:\\projects\\我的 项目' }], 'a path with a space survives without quoting')
+    assert.match(h.sent[0].text, /接着发 \/new 立刻开新对话/)
+    assert.match(h.sent[0].text, /当前会话的工作目录不变/)
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('/sessions hides archived sessions', async () => {
+  // Archiving is the operator saying "stop showing me this"; a phone menu that
+  // lists it anyway makes the desktop's archive useless.
+  const h = harness({
+    sessionsList: [
+      { sessionId: 'session-live1111', updatedAt: 2, cwd: 'C:\\work' },
+      { sessionId: 'session-arch2222', updatedAt: 1, cwd: 'C:\\work' },
+    ],
+    archived: ['session-arch2222'],
+  })
+  try {
+    await h.handler(message({ text: '/sessions' }))
+    const body = h.sent[0].text
+    assert.match(body, /live1111/)
+    assert.doesNotMatch(body, /arch2222/, 'an archived session is not offered for /resume')
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('/workspace is refused for a non-owner and when settings are unwritable', async () => {
+  const member = harness({ settings: { mode: 'chat', allow: ['MEMBER'], ownerOpenId: 'OWNER' } })
+  try {
+    await member.handler(message({ kind: 'group', peerId: 'GROUP', userId: 'MEMBER', text: '/workspace /tmp' }))
+    assert.equal(member.updates.length, 0)
+    assert.match(member.sent[0].text, /只有 owner/)
+  } finally {
+    member.cleanup()
+  }
+
+  const locked = harness({ scope: null })
+  try {
+    await locked.handler(message({ text: '/workspace /tmp' }))
+    assert.match(locked.sent[0].text, /设置命名空间不可用/)
+  } finally {
+    locked.cleanup()
+  }
+})
+
+test('/sessions lists recent sessions by title and marks the bound one', async () => {
+  const h = harness({
+    bindings: [['private:OWNER', 'session-current1']],
+    sessionsList: [
+      // The title projection is what the desktop sidebar shows; a phone listing
+      // that agrees with it is one the operator can act on. A session with no
+      // cached row falls back to an id fragment plus its directory.
+      { sessionId: 'session-current1', updatedAt: Date.UTC(2026, 8, 12, 6, 30), running: true, blank: false, cwd: 'C:\\Users\\<user>\\Documents', projections: { asOfSeq: 1, values: { title: '调试 QQ 按钮' } } },
+      { sessionId: 'session-other222', updatedAt: Date.UTC(2026, 8, 11, 3, 5), running: false, blank: false, cwd: 'D:\\work' },
+      { sessionId: 'session-sub333', updatedAt: Date.UTC(2026, 8, 10), running: false, blank: false, origin: 'subagent' },
+    ],
+  })
+  try {
+    await h.handler(message({ text: '/sessions' }))
+    const body = h.sent[0].text
+    assert.match(body, /1\. 调试 QQ 按钮 · .* · 运行中 ←/, 'the title is what identifies a conversation')
+    assert.match(body, /2\. other222 · work · /, 'without a title the id fragment and directory still distinguish it')
+    assert.doesNotMatch(body, /sub333/, 'subagent sessions are not resumable from QQ')
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('/resume <number> rebinds the conversation to that session', async () => {
+  const h = harness({
+    bindings: [['private:OWNER', 'session-current1']],
+    sessionsList: [
+      { sessionId: 'session-current1', updatedAt: 1, running: false, blank: false },
+      { sessionId: 'session-other222', updatedAt: 2, running: false, blank: false },
+    ],
+  })
+  try {
+    await h.handler(message({ text: '/sessions' }))
+    await h.handler(message({ text: '/resume 2' }))
+    assert.match(h.sent[1].text, /已切换到会话 other222/)
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('/resume without a fresh listing refuses rather than guessing', async () => {
+  const h = harness({ bindings: [['private:OWNER', 'session-current1']] })
+  try {
+    await h.handler(message({ text: '/resume 3' }))
+    assert.match(h.sent[0].text, /不在你最近一次 \/sessions 列表里/)
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('/stop cancels the bound session', async () => {
+  const h = harness({ bindings: [['private:OWNER', 'session-current1']] })
+  try {
+    await h.handler(message({ text: '/stop' }))
+    assert.deepEqual(h.cancels, [{ sessionId: 'session-current1' }])
+    assert.match(h.sent[0].text, /已请求取消/)
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('/help advertises every command the bridge answers', async () => {
+  const h = harness()
+  try {
+    await h.handler(message({ text: '/help' }))
+    const body = h.sent[0].text
+    for (const command of ['/status', '/new', '/stop', '/model', '/sessions', '/resume', '/workspace']) {
+      assert.ok(body.includes(command), `${command} must be discoverable from /help`)
+    }
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('an open interaction still lets an escape-hatch command through', async () => {
+  const h = harness({ bindings: [['private:OWNER', 'session-current1']] })
+  try {
+    await h.handler(message({ text: '/new' }))
+    assert.match(h.sent[0].text, /已开新对话/)
+    assert.match(h.sent[0].text, /旧对话没有丢/, 'starting a new one must not read as throwing the old one away')
+  } finally {
+    h.cleanup()
+  }
+})
+
+// ── /restart ────────────────────────────────────────────────────────────────
+
+test('/restart is owner-only', async () => {
+  const h = harness({
+    settings: { mode: 'chat', allow: ['MEMBER'], ownerOpenId: 'OWNER' },
+    bindings: [['group:GROUP', 'sess_g']],
+    restart: { prepare: () => ({ launcher: 'C:/l.cmd', port: 3080 }), go: () => { throw new Error('must not restart') } },
+  })
+  try {
+    await h.handler(message({ kind: 'group', peerId: 'GROUP', userId: 'MEMBER', text: '/restart' }))
+    assert.match(h.sent[0].text, /只有 owner/)
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('/restart relays why it cannot restart instead of exiting anyway', async () => {
+  const restarts = []
+  const h = harness({
+    bindings: [['private:OWNER', 'sess_1']],
+    restart: { prepare: () => ({ error: '没有可用的启动器。' }), go: () => restarts.push('go') },
+  })
+  try {
+    await h.handler(message({ text: '/restart' }))
+    assert.match(h.sent[0].text, /无法重启：没有可用的启动器/)
+    assert.deepEqual(restarts, [], 'a refused restart must not take the server down')
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('/restart answers before it hands the process over', async () => {
+  // Ordering is the whole point: the confirmation is the last thing this
+  // process ever sends, and a restart that exits first leaves the operator with
+  // no idea whether the command was even received.
+  const seen = []
+  const h = harness({
+    bindings: [['private:OWNER', 'sess_1']],
+    restart: {
+      prepare: () => ({ launcher: 'C:/launcher.cmd', port: 3080 }),
+      // Runs after the handler awaited its reply, so this snapshot is the proof.
+      go: (options) => seen.push({ repliesSoFar: h.sent.length, ...options }),
+    },
+  })
+  try {
+    await h.handler(message({ text: '/restart' }))
+
+    assert.equal(seen.length, 1)
+    assert.equal(seen[0].repliesSoFar, 1, 'the confirmation must already be on the wire')
+    assert.match(h.sent[0].text, /正在重启/)
+    assert.equal(seen[0].key, 'private:OWNER', 'the marker names the conversation to announce into')
+    assert.equal(seen[0].launcher, 'C:/launcher.cmd')
+    assert.equal(seen[0].port, 3080)
+  } finally {
+    h.cleanup()
+  }
+})
+
+// ── /restart guards ─────────────────────────────────────────────────────────
+
+test('/restart refuses while a turn is running, and names the escape hatch', async () => {
+  const restarts = []
+  const h = harness({
+    bindings: [['private:OWNER', 'sess_1']],
+    busy: () => true,
+    restart: {
+      prepare: () => ({ launcher: 'C:/l.cmd', port: 3080 }),
+      preflight: async () => ({ ok: true }),
+      go: () => restarts.push('go'),
+    },
+  })
+  try {
+    await h.handler(message({ text: '/restart' }))
+    assert.match(h.sent[0].text, /正在运行/)
+    assert.match(h.sent[0].text, /\/restart force/)
+    assert.deepEqual(restarts, [], 'a running turn must not be discarded by one message')
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('/restart force goes through while the turn runs', async () => {
+  const restarts = []
+  const h = harness({
+    bindings: [['private:OWNER', 'sess_1']],
+    busy: () => true,
+    restart: {
+      prepare: () => ({ launcher: 'C:/l.cmd', port: 3080 }),
+      preflight: async () => ({ ok: true }),
+      go: (options) => restarts.push(options),
+    },
+  })
+  try {
+    await h.handler(message({ text: '/restart force' }))
+    assert.equal(restarts.length, 1)
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('a failed preflight cancels the restart and reports the real error', async () => {
+  const restarts = []
+  const h = harness({
+    bindings: [['private:OWNER', 'sess_1']],
+    restart: {
+      prepare: () => ({ launcher: 'C:/l.cmd', port: 3080 }),
+      preflight: async () => ({ ok: false, error: 'SyntaxError: Unexpected token }' }),
+      go: () => restarts.push('go'),
+    },
+  })
+  try {
+    await h.handler(message({ text: '/restart' }))
+    const body = h.sent.map((entry) => entry.text).join('\n')
+    assert.match(body, /自检没通过/)
+    assert.match(body, /SyntaxError/)
+    assert.deepEqual(restarts, [], 'a broken edit must leave a working bridge behind')
+  } finally {
+    h.cleanup()
+  }
+})
+
+// ── /usage and /screen ──────────────────────────────────────────────────────
+
+test('/usage reports the session figures the desktop also shows', async () => {
+  const asked = []
+  const h = harness({
+    bindings: [['private:OWNER', 'sess_1']],
+    usage: async (sessionId) => {
+      asked.push(sessionId)
+      return { turns: 12, steps: 86, llmMs: 252_000, toolMs: 96_000, decodeMs: 180_000, decodeTokens: 32_801_628, ttftMs: 12_000, ttftSteps: 40 }
+    },
+  })
+  try {
+    await h.handler(message({ text: '/usage' }))
+    assert.deepEqual(asked, ['sess_1'], 'the figures are for the bound session')
+    const body = h.sent[0].text
+    assert.match(body, /轮次：12 · 步骤：86/)
+    assert.match(body, /模型耗时：4 分 12 秒 · 工具耗时：1 分 36 秒/)
+    assert.match(body, /输出 tokens：32,801,628/)
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('/usage explains an unreadable session instead of printing zeros', async () => {
+  const h = harness({ bindings: [['private:OWNER', 'sess_1']], usage: async () => null })
+  try {
+    await h.handler(message({ text: '/usage' }))
+    assert.match(h.sent[0].text, /读不到本会话的用量/)
+  } finally {
+    h.cleanup()
+  }
+
+  const fresh = harness()
+  try {
+    await fresh.handler(message({ text: '/usage' }))
+    assert.match(fresh.sent[0].text, /还没有 DSH 会话/)
+  } finally {
+    fresh.cleanup()
+  }
+})
+
+test('a sub-second first token reads as milliseconds, not as zero seconds', () => {
+  const body = formatUsage({ turns: 1, steps: 2, ttftMs: 300, ttftSteps: 3 })
+  assert.match(body, /首 token 平均：100 毫秒/)
+})
+
+test('each session figure is optional and never faked', () => {
+  // A session that has only just started has turns and steps and nothing else;
+  // the line for a figure that does not exist must be absent, not zeroed.
+  const body = formatUsage({ turns: 1, steps: 1 })
+  assert.match(body, /轮次：1 · 步骤：1/)
+  assert.doesNotMatch(body, /模型耗时/)
+  assert.doesNotMatch(body, /输出 tokens/)
+  assert.doesNotMatch(body, /首 token/)
+})
+
+test('/screen is owner-only', async () => {
+  const shots = []
+  const h = harness({
+    settings: { mode: 'chat', allow: ['MEMBER'], ownerOpenId: 'OWNER' },
+    bindings: [['group:GROUP', 'sess_g']],
+    screenshot: async (options) => { shots.push(options); return { width: 1, height: 1, method: 'screen' } },
+  })
+  try {
+    await h.handler(message({ kind: 'group', peerId: 'GROUP', userId: 'MEMBER', text: '/screen' }))
+    assert.match(h.sent[0].text, /只有 owner/)
+    assert.deepEqual(shots, [], 'a group member must not be able to photograph the machine')
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('/screen captures the whole screen, or one named window', async () => {
+  const shots = []
+  const h = harness({
+    bindings: [['private:OWNER', 'sess_1']],
+    screenshot: async (options) => { shots.push(options); return { width: 1299, height: 817, method: 'printwindow' } },
+  })
+  try {
+    await h.handler(message({ text: '/screen' }))
+    assert.match(h.sent[0].text, /截取整个屏幕/)
+    assert.equal(shots[0].process, undefined)
+
+    await h.handler(message({ text: '/screen weixin', messageId: 'm2' }))
+    assert.match(h.sent[1].text, /截取窗口：weixin/)
+    assert.equal(shots[1].process, 'weixin')
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('/screen reports why a capture failed, on the same conversation', async () => {
+  const h = harness({
+    bindings: [['private:OWNER', 'sess_1']],
+    screenshot: async () => { throw new Error('no matching window has rendered content') },
+  })
+  try {
+    await h.handler(message({ text: '/screen weixin' }))
+    const body = h.sent.map((entry) => entry.text).join('\n')
+    assert.match(body, /截图失败/)
+    assert.match(body, /no matching window has rendered content/, 'the helper\'s reason reaches the operator')
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('/new <编号> opens a conversation in that project in one step', async () => {
+  const h = harness({
+    bindings: [['private:OWNER', 'sess_old']],
+    projects: [
+      { path: 'C:\work', title: '工作' },
+      { path: 'D:\play', title: '折腾' },
+    ],
+  })
+  try {
+    await h.handler(message({ text: '/workspace' }))
+    await h.handler(message({ text: '/new 2', messageId: 'm2' }))
+    assert.deepEqual(h.updates, [{ workspacePath: 'D:\play' }], 'the workspace is switched and the conversation started')
+    assert.match(h.sent.at(-1).text, /已开新对话/)
+    assert.match(h.sent.at(-1).text, /下一.*D:\play/)
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('/new <编号> with a bad number opens nothing at all', async () => {
+  const h = harness({ bindings: [['private:OWNER', 'sess_old']], projects: [{ path: 'C:\work', title: '工作' }] })
+  try {
+    await h.handler(message({ text: '/workspace' }))
+    await h.handler(message({ text: '/new 9', messageId: 'm2' }))
+    assert.deepEqual(h.updates, [])
+    assert.match(h.sent.at(-1).text, /未开新对话/)
+    // Half-applying the request would leave the operator believing both parts
+    // happened; refusing the whole command is the only honest answer.
+    assert.equal(h.sessions.get('private:OWNER').sessionId, 'sess_old', 'the binding is untouched')
+  } finally {
+    h.cleanup()
+  }
+})
