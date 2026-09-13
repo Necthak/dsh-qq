@@ -116,6 +116,8 @@ Send these in QQ. Anything not starting with `/` is delivered to the agent as or
 | `/resume <n\|session id>` | Rebind this conversation to an existing session (owner only) |
 | `/usage` | Balances, subscription windows, recent daily spend and remaining days, and today's tokens and cost |
 | `/screen [process]` | Capture the screen and send it here (owner only) |
+| `/log [lines]` | Read the plugin's recent log lines (owner only; 15 by default, 40 at most) |
+| `/doctor` | Actively check the channel, watchdog, credentials, owner, balance, sessions and last send failure (owner only) |
 | `/restart`, `/restart force` | Restart the DSH process (owner only; `force` is required while a turn is running) |
 
 ## Agent tools

@@ -116,6 +116,8 @@ cd dsh-qq && npm install
 | `/resume <编号\|会话ID>` | 将本对话切换至指定会话（仅 owner） |
 | `/usage` | 额度与用量：余额、套餐窗口、近期日均花费与余额可用天数、当日 tokens 与花费 |
 | `/screen [进程名]` | 截图并发送至本对话（仅 owner） |
+| `/log [行数]` | 查看最近的本插件日志（仅 owner，默认 15 条，最多 40） |
+| `/doctor` | 主动自检：通道、看门狗、凭据、owner、余额、会话与发送失败（仅 owner） |
 | `/restart`、`/restart force` | 重启 DSH 进程（仅 owner；回合运行中需 `force`） |
 
 ## agent 工具

@@ -22,7 +22,7 @@ import { join } from 'node:path'
 import { SessionMap } from '../lib/bridge/sessions.js'
 import { PendingInteractions } from '../lib/bridge/pending.js'
 import { createInboundHandler } from '../lib/bridge/inbound.js'
-import { createSessionCommands, sessionLabel } from '../lib/bridge/commands.js'
+import { createSessionCommands, formatDoctor, sessionLabel } from '../lib/bridge/commands.js'
 import { burnRate, compactNumber, currencySign, dayKey, daysRemaining, formatCreditReport, lowBalances, lowestBalance } from '../lib/bridge/credit.js'
 import { Outbound } from '../lib/bridge/outbound.js'
 import { registerQuestionAnswerer } from '../lib/bridge/questions.js'
@@ -63,7 +63,7 @@ function recorder() {
  * @param options - sessions to bind, settings, and scripted Host answers.
  * @returns The handler plus the collaborators a test asserts on.
  */
-function harness({ settings = {}, bindings = [], sessionsList = [], cancelResult = { accepted: true }, scope, restart, busy, credit, screenshot, projects = [], archived = [], search } = {}) {
+function harness({ settings = {}, bindings = [], sessionsList = [], cancelResult = { accepted: true }, scope, restart, busy, credit, screenshot, projects = [], archived = [], search, readLog, doctor } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-qq-cmd-'))
   const sessions = new SessionMap({ path: join(dir, 'sessions.json'), log: () => {} })
   for (const [key, sessionId] of bindings) sessions.bind(key, sessionId)
@@ -98,6 +98,8 @@ function harness({ settings = {}, bindings = [], sessionsList = [], cancelResult
     credit,
     screenshot,
     search,
+    readLog,
+    doctor,
     log: () => {},
   })
 
@@ -979,4 +981,73 @@ test('/find does not resurface an archived session', async () => {
   } finally {
     h.cleanup()
   }
+})
+
+// ── /log and /doctor ────────────────────────────────────────────────────────
+
+test('/log shows the plugin log tail and is owner-only', async () => {
+  const h = harness({
+    bindings: [['private:OWNER', 'sess_1']],
+    readLog: ({ limit }) => ({ error: '', lines: [`21:39:04  gateway online（${String(limit)} 条）`, '21:39:05  delivered to session sess_1'] }),
+  })
+  try {
+    await h.handler(message({ text: '/log' }))
+    assert.match(h.sent[0].text, /最近 2 条桥接日志/)
+    assert.match(h.sent[0].text, /15 条/, 'the default depth is passed through')
+    assert.match(h.sent[0].text, /gateway online/)
+  } finally {
+    h.cleanup()
+  }
+
+  const member = harness({
+    settings: { mode: 'chat', allow: ['MEMBER'], ownerOpenId: 'OWNER' },
+    bindings: [['group:GROUP', 'sess_g']],
+    readLog: () => ({ error: '', lines: ['secret'] }),
+  })
+  try {
+    await member.handler(message({ kind: 'group', peerId: 'GROUP', userId: 'MEMBER', text: '/log' }))
+    assert.match(member.sent[0].text, /只有 owner/)
+    assert.doesNotMatch(member.sent[0].text, /secret/)
+  } finally {
+    member.cleanup()
+  }
+})
+
+test('/log reports an unreadable log instead of looking empty', async () => {
+  const h = harness({ bindings: [['private:OWNER', 'sess_1']], readLog: () => ({ error: '读取日志失败：EACCES', lines: [] }) })
+  try {
+    await h.handler(message({ text: '/log' }))
+    assert.match(h.sent[0].text, /读取日志失败/)
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('/doctor runs the checks and ends with a verdict', async () => {
+  const h = harness({
+    bindings: [['private:OWNER', 'sess_1']],
+    doctor: async () => [
+      { level: 'ok', label: 'QQ 网关在线', detail: '事件通道已连接' },
+      { level: 'warn', label: '余额偏低', detail: 'DeepSeek 4.10（阈值 5）' },
+    ],
+  })
+  try {
+    await h.handler(message({ text: '/doctor' }))
+    const body = h.sent[0].text
+    assert.match(body, /✅ QQ 网关在线/)
+    assert.match(body, /⚠️ 余额偏低/)
+    assert.match(body, /结论：无异常，1 项需留意/)
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('a failing check is called out and points at the log', () => {
+  const body = formatDoctor([
+    { level: 'ok', label: '通道已启用', detail: 'AppID 1' },
+    { level: 'bad', label: '看门狗已消失', detail: '自动恢复失效' },
+  ])
+  assert.match(body, /❌ 看门狗已消失/)
+  assert.match(body, /结论：1 项异常/)
+  assert.match(body, /\/log/, 'the verdict says where to look next')
 })
