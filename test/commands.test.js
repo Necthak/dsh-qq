@@ -23,7 +23,7 @@ import { SessionMap } from '../lib/bridge/sessions.js'
 import { PendingInteractions } from '../lib/bridge/pending.js'
 import { createInboundHandler } from '../lib/bridge/inbound.js'
 import { createSessionCommands, sessionLabel } from '../lib/bridge/commands.js'
-import { compactNumber, dayKey, formatCreditReport } from '../lib/bridge/credit.js'
+import { compactNumber, currencySign, dayKey, formatCreditReport, lowBalances } from '../lib/bridge/credit.js'
 import { Outbound } from '../lib/bridge/outbound.js'
 import { registerQuestionAnswerer } from '../lib/bridge/questions.js'
 import { registerApprovalAnswerer } from '../lib/bridge/approvals.js'
@@ -840,4 +840,27 @@ test('/new <编号> with a bad number opens nothing at all', async () => {
   } finally {
     h.cleanup()
   }
+})
+
+test('a balance below the threshold is reported once, and an alias is not a second account', () => {
+  const snapshots = { providers: {
+    'deepseek-official': { displayName: 'DeepSeek', balance: { currency: 'CNY', totalBalance: '4.10' } },
+    deepseek: { displayName: 'deepseek', balance: { currency: 'CNY', totalBalance: '4.10' } },
+    'opencode-go': { displayName: 'opencode-go', plan: { windows: [{ key: 'week', percent: 28 }] } },
+    kimi: { displayName: 'kimi', balance: { currency: 'CNY', totalBalance: '99.00' } },
+  } }
+  const low = lowBalances(snapshots, 5)
+  assert.equal(low.length, 1, 'the same balance under two ids is one warning')
+  assert.equal(low[0].name, 'DeepSeek')
+  assert.equal(low[0].amount, 4.1)
+  assert.equal(currencySign('CNY'), '¥')
+  assert.equal(currencySign('USD'), '$')
+})
+
+test('the balance warning is off at threshold zero and silent when nothing is low', () => {
+  const snapshots = { providers: { a: { displayName: 'A', balance: { currency: 'CNY', totalBalance: '20.23' } } } }
+  assert.deepEqual(lowBalances(snapshots, 0), [], 'zero disables the check')
+  assert.deepEqual(lowBalances(snapshots, 5), [], 'a healthy balance says nothing')
+  assert.deepEqual(lowBalances(null, 5), [])
+  assert.deepEqual(lowBalances({ providers: { a: { displayName: 'A', balance: { currency: 'CNY', totalBalance: 'not a number' } } } }, 5), [])
 })

@@ -48,6 +48,29 @@ function Write-Note([string]$Message) {
   try { Add-Content -Path $logFile -Value $line -Encoding UTF8 } catch { }
 }
 
+function Get-LogTail([int]$Count) {
+  # The last lines the server wrote before it went away: the one piece of
+  # context that was missing every previous time this happened.
+  $bridge = Join-Path $DshHome 'web-launch.log'
+  if (-not (Test-Path $bridge)) { return @('(no bridge log)') }
+  try {
+    return @(Get-Content $bridge -Tail $Count -ErrorAction Stop | ForEach-Object { '    | ' + $_ })
+  } catch {
+    return @('(bridge log unreadable: ' + $_.Exception.Message + ')')
+  }
+}
+
+function Get-ServerProcesses {
+  # Is the old process still there (a hang) or gone entirely (a kill)? The two
+  # point in completely different directions.
+  try {
+    return @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction Stop |
+      Where-Object { $_.CommandLine -like '*bin.js*' })
+  } catch {
+    return @()
+  }
+}
+
 function Test-Port {
   $client = New-Object Net.Sockets.TcpClient
   try {
@@ -98,17 +121,22 @@ while ($true) {
   if (Test-Port) {
     # Healthy. Say so only on the way back up, not every minute.
     if ($script:wasDown) {
-      Write-Note "server is answering again on port $Port"
+      $seconds = if ($script:downSince) { [int]((Get-Date) - $script:downSince).TotalSeconds } else { 0 }
+      Write-Note "server is answering again on port $Port after about ${seconds}s"
       $script:wasDown = $false
     }
   } elseif (Test-RestartInFlight) {
     # Expected downtime; the restarter owns it.
   } else {
     $script:wasDown = $true
+    $script:downSince = Get-Date
+    $leftovers = Get-ServerProcesses
+    Write-Note ("server is DOWN (no restart in flight); leftover server processes: " + $(if ($leftovers.Count -eq 0) { 'none' } else { ($leftovers | ForEach-Object { $_.ProcessId }) -join ',' }))
+    foreach ($line in Get-LogTail 6) { Write-Note $line }
     if ($DryRun) {
-      Write-Note "DRY RUN: port $Port is down and no restart is in flight; would start $Launcher"
+      Write-Note "DRY RUN: would start $Launcher"
     } else {
-      Write-Note "port $Port is down and no restart is in flight; starting the launcher"
+      Write-Note "starting the launcher"
       try {
         Start-Process -FilePath 'cmd.exe' `
           -ArgumentList ('/c "' + $Launcher + '" --no-open') `
