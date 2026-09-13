@@ -40,7 +40,7 @@ DSH 的 `/api` 对**每一个请求**都强制校验一个签名 Cookie（`dsh-c
 
 ## 安装
 
-插件目录：`C:\Users\<user>\Documents\dsh-qq`
+插件目录：`C:\Users\<你>\Documents\dsh-qq`
 
 ```bash
 cd dsh-qq && npm install
@@ -50,7 +50,7 @@ cd dsh-qq && npm install
 
 1. `~/.dsh/profiles/web/package.json` 的 `dependencies` 加：
    ```json
-   "dsh-qq": "link:C:/Users/<user>/Documents/dsh-qq"
+   "dsh-qq": "link:C:/Users/<你>/Documents/dsh-qq"
    ```
 2. `~/.dsh/profiles/web/cordis.patch.yml` 追加：
    ```yaml

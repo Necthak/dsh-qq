@@ -489,7 +489,7 @@ test('/sessions lists recent sessions by title and marks the bound one', async (
       // The title projection is what the desktop sidebar shows; a phone listing
       // that agrees with it is one the operator can act on. A session with no
       // cached row falls back to an id fragment plus its directory.
-      { sessionId: 'session-current1', updatedAt: Date.UTC(2026, 8, 12, 6, 30), running: true, blank: false, cwd: 'C:\\Users\\<user>\\Documents', projections: { asOfSeq: 1, values: { title: '调试 QQ 按钮' } } },
+      { sessionId: 'session-current1', updatedAt: Date.UTC(2026, 8, 12, 6, 30), running: true, blank: false, cwd: 'C:\\work', projections: { asOfSeq: 1, values: { title: '调试 QQ 按钮' } } },
       { sessionId: 'session-other222', updatedAt: Date.UTC(2026, 8, 11, 3, 5), running: false, blank: false, cwd: 'D:\\work' },
       { sessionId: 'session-sub333', updatedAt: Date.UTC(2026, 8, 10), running: false, blank: false, origin: 'subagent' },
     ],
