@@ -1,5 +1,7 @@
 # dsh-qq
 
+**简体中文** | [English](README.en.md)
+
 通过官方 QQ 机器人在移动端操控本机 DeepSeek Harness 的 DSH 插件。
 
 QQ 消息被投递为 DSH 会话中的用户消息；agent 的回复、工具审批请求与 `ask_user_question` 提问均回传至 QQ。其目的是使远程场景下的 agent 驱动不必依赖桌面环境。
@@ -153,7 +155,7 @@ qq/             token · OpenAPI · WebSocket 网关 · 事件归一化
 bridge/         准入 · 投递 · 会话表 · 出站队列 · 挂起交互 · 命令 · 工具 · 截图 · 额度 · 重启
 ```
 
-设计说明见 **[docs/design-notes.md](docs/design-notes.md)**；运维与排障见 **[docs/operations.md](docs/operations.md)**。
+设计说明见 **[docs/design-notes.md](docs/design-notes.md)**；运维与排障见 **[docs/operations.md](docs/operations.md)**。两份文档的英文版分别为 [design-notes.en.md](docs/design-notes.en.md) 与 [operations.en.md](docs/operations.en.md)。
 
 ## 已知限制
 

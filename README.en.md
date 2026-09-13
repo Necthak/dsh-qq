@@ -1,5 +1,7 @@
 # dsh-qq
 
+[简体中文](README.md) | **English**
+
 A DSH plugin that drives a local DeepSeek Harness session from an official QQ bot, so an agent running on a desktop machine can be operated from a phone.
 
 QQ messages are delivered as user messages in a DSH session. Agent replies, tool approval requests and `ask_user_question` prompts are routed back to QQ. The purpose is to remove the desktop from the loop for remote work.
@@ -154,7 +156,7 @@ bridge/         admission · delivery · session table · outbound queue · pend
                 interactions · commands · tools · capture · credit · restart
 ```
 
-Design notes: **[docs/design-notes.md](docs/design-notes.md)**. Operations and troubleshooting: **[docs/operations.md](docs/operations.md)** (both in Chinese).
+Design notes: **[docs/design-notes.en.md](docs/design-notes.en.md)**. Operations and troubleshooting: **[docs/operations.en.md](docs/operations.en.md)**. (Chinese editions: [design-notes.md](docs/design-notes.md), [operations.md](docs/operations.md).)
 
 ## Known limitations
 
