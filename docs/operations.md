@@ -137,6 +137,7 @@ curl http://127.0.0.1:3080/dsh-qq/state                               # 预期 4
 - **`.ps1` 文件必须为纯 ASCII。** Windows PowerShell 在文件不含 BOM 时按 ANSI 解码，非 ASCII 字符会截断字符串并造成语法错误（`The string is missing the terminator`）。说明文字应置于 `.cmd` 或文档中。
 - **`$Home` 是只读内置变量。** 以其作为参数名会得到 `VariableNotWritable`。
 - **PowerShell 变量名不区分大小写。** 局部变量 `$method` 会与参数 `$Method` 冲突。
+- **用 Python 编辑仓库文件时必须显式指定 `newline=''`。** 默认的文本模式读取会把 CRLF 归一为 LF，写回后整个文件在 diff 里显示为全文件改动 —— 本仓库的 `test/outbound.test.js` 就是这样产生了 540 行虚假改动。
 - **不使用 Python 字符串书写含反斜杠的路径。** `\a`、`\t`、`\b` 会被解释为控制字符，在文件中留下不可见污染。书写后应检查是否存在控制字符。
 
 ## 存储占用

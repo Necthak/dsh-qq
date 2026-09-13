@@ -137,6 +137,7 @@ curl http://127.0.0.1:3080/dsh-qq/state                               # expect 4
 - **A `.ps1` file must be pure ASCII.** Windows PowerShell decodes a file without a BOM as ANSI, and non-ASCII text truncates strings into syntax errors (`The string is missing the terminator`). Explanations belong in the `.cmd` file or the documentation.
 - **`$Home` is a read-only automatic variable.** Using it as a parameter name yields `VariableNotWritable`.
 - **PowerShell variable names are case-insensitive.** A local `$method` collides with a `$Method` parameter.
+- **When editing a repository file from Python, pass `newline=''` explicitly.** The default text mode normalises CRLF to LF, so writing the file back turns every line into a change: that is how `test/outbound.test.js` acquired 540 phantom changed lines.
 - **Do not write Windows paths through Python string literals.** `\a`, `\t` and `\b` become control characters and leave invisible corruption in the file. Check for control characters after writing.
 
 ## Storage
