@@ -303,3 +303,23 @@ test('acknowledging a click is delegated to the OpenAPI client', async () => {
     h.cleanup()
   }
 })
+
+test('a markdown table becomes readable lines, because QQ renders none', async () => {
+  // The platform supports bold, italics, lists, quotes and rules, but not
+  // tables. Before this, both encodings delivered the pipes as they were, so
+  // every table this bridge forwarded arrived as a row of vertical bars.
+  const h = harness({ markdownMode: 'never' })
+  try {
+    await h.outbound.sendActive({
+      key: 'private:U1',
+      kind: 'private',
+      peerId: 'U1',
+      text: '| 项 | 值 |\n| --- | --- |\n| 余额 | ¥20.23 |',
+    })
+    const body = h.api.sent[0].body.content
+    assert.match(body, /· 项：余额 · 值：¥20\.23/)
+    assert.doesNotMatch(body, /\|/, 'no pipes survive')
+  } finally {
+    h.cleanup()
+  }
+})

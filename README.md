@@ -183,7 +183,7 @@ bridge/         准入 · 投递 · 会话表 · 出站队列 · 挂起交互 ·
 ## 开发
 
 ```bash
-npm test          # 295 个单元测试
+npm test          # 309 个单元测试
 ```
 
 - 测试全程离线：HTTP、WebSocket 与 DSH 服务均以替身注入

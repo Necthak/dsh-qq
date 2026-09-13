@@ -184,7 +184,7 @@ Platform constraints, all handled by the implementation:
 ## Development
 
 ```bash
-npm test          # 295 unit tests
+npm test          # 309 unit tests
 ```
 
 - The test suite is offline: HTTP, WebSocket and DSH services are injected as doubles
