@@ -45,6 +45,7 @@
 | 图片上传后报 `850019 不支持的文件格式` | 分片偏移不可用 `index × block_size` 计算；线上返回的第一个分片 index 为 1，按该方式计算会切出空分片 | `qq/api.js` |
 | 预签名 PUT 被存储端拒绝 | 不可携带 `Authorization` 与 JSON content-type | `qq/api.js` |
 | HTTP 200 但消息未送达 | 响应必须包含 `id` 才视为送达 | `bridge/outbound.js` |
+| 同一条消息被执行两次 | 平台可能重复推送相同的 `msg_id`；桥接按会话记录最近 50 个已处理 id 并丢弃重复项，判断位于准入之后、分发之前 | `bridge/inbound.js` |
 
 ## 进程、控制台与重启
 

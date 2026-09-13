@@ -45,6 +45,7 @@ The timestamps are deliberate. Without a clock, repeated gateway reconnects in t
 | `850019 富媒体文件格式不支持` after an image upload | Part offsets must not be computed as `index × block_size`: the live API returns the first part with index **1**, so that formula slices past the end and every part is empty | `qq/api.js` |
 | A presigned PUT is refused | It must not carry `Authorization` or a JSON content-type | `qq/api.js` |
 | HTTP 200 but the message never arrived | The response must carry an `id` to count as delivered | `bridge/outbound.js` |
+| The same message is executed twice | The platform may push the same `msg_id` more than once; the bridge records the last 50 handled ids per conversation and drops repeats, checking after admission and before any dispatch | `bridge/inbound.js` |
 
 ## Processes, consoles and restarts
 

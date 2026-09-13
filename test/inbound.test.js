@@ -10,13 +10,19 @@ import { createInboundHandler } from '../lib/bridge/inbound.js'
 import { createSessionCommands } from '../lib/bridge/commands.js'
 
 /** A normalized private message. */
+let messageCounter = 0
+
 function message(overrides = {}) {
+  // Every real delivery carries its own id, and the bridge now drops a repeated
+  // id as a platform redelivery. A fixed id here would make the second message
+  // in any test look like a duplicate of the first.
+  messageCounter += 1
   return {
     kind: 'private',
     peerId: 'OWNER',
     userId: 'OWNER',
     userName: '甲',
-    messageId: 'ROBOT1.0_abc',
+    messageId: `ROBOT1.0_${String(messageCounter)}`,
     text: '你好',
     attachments: [],
     ark: '',
@@ -85,7 +91,7 @@ test('every admitted message arms the reply cursor, commands included', async ()
   const h = harness()
   try {
     await h.handler(message())
-    assert.equal(h.sessions.get('private:OWNER').replyToMessageId, 'ROBOT1.0_abc')
+    assert.match(h.sessions.get('private:OWNER').replyToMessageId, /^ROBOT1\.0_/)
 
     // A command is answered by the bridge, but its answer is still a reply to
     // this message — and it used to leave the cursor on an older message, which
@@ -103,7 +109,7 @@ test('a refused prompt leaves a fresh reply target, never a stale one', async ()
     await h.handler(message())
     assert.equal(h.prompts.length, 0)
     const record = h.sessions.get('private:OWNER')
-    assert.equal(record?.replyToMessageId, 'ROBOT1.0_abc', 'the cursor points at the newest message, refused or not')
+    assert.match(record?.replyToMessageId ?? '', /^ROBOT1\.0_/, 'the cursor points at the newest message, refused or not')
     assert.equal(h.sent.length, 1, 'the user is told the request was refused')
     assert.match(h.sent[0].text, /DSH 拒绝了这个请求/)
   } finally {
@@ -444,6 +450,76 @@ test('an attachment that cannot be downloaded says so instead of vanishing', asy
 
     const text = h.prompts[0].request.content.map((part) => part.text ?? '').join('\n')
     assert.match(text, /附件未能保存/, 'a failed download is stated, not silent')
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('a redelivered message is handled once', async () => {
+  // The platform documents that the same msg_id may be pushed more than once.
+  // A repeat reaching the agent is not harmless: "delete that file", "commit
+  // and push" or "restart" would simply be executed a second time, silently.
+  const h = harness()
+  try {
+    const handler = createInboundHandler({
+      ctx: {
+        sessionController: {
+          prompt: async (request, signal) => { signal.throwIfAborted(); h.prompts.push({ request, signal }); return { accepted: true } },
+        },
+      },
+      sessions: h.sessions,
+      outbound: { deliver: async () => {}, sendActive: async () => {} },
+      pending: new PendingInteractions({ log: () => {} }),
+      config: () => ({ mode: 'closed-agent', ownerOpenId: 'OWNER' }),
+      log: () => {},
+      ensureSession: async () => 'sess_1',
+      status: () => ({}),
+      signal: h.controller.signal,
+    })
+
+    const first = message({ text: '删掉那个文件', messageId: 'msg_dup_1' })
+    await handler(first)
+    await handler({ ...first })                       // the platform pushes it again
+    assert.equal(h.prompts.length, 1, 'the agent sees it once')
+
+    await handler(message({ text: '删掉那个文件', messageId: 'msg_dup_2' }))
+    assert.equal(h.prompts.length, 2, 'a different message id is a different message')
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('a duplicate command is not executed twice either', async () => {
+  const h = harness({ bindings: [['private:OWNER', 'sess_1']] })
+  const replies = []
+  try {
+    const handler = createInboundHandler({
+      ctx: { sessionController: { prompt: async () => { throw new Error('must not be called') } } },
+      sessions: h.sessions,
+      outbound: {
+        deliver: async (job) => { replies.push(job) },
+        sendActive: async (job) => { replies.push(job) },
+      },
+      pending: new PendingInteractions({ log: () => {} }),
+      commands: createSessionCommands({
+        ctx: {},
+        sessions: h.sessions,
+        pending: new PendingInteractions({ log: () => {} }),
+        settingsScope: { update: async () => {} },
+        log: () => {},
+      }),
+      config: () => ({ mode: 'closed-agent', ownerOpenId: 'OWNER' }),
+      log: () => {},
+      ensureSession: async () => 'sess_1',
+      status: () => ({}),
+      signal: h.controller.signal,
+    })
+    const dup = message({ text: '/sessions', messageId: 'msg_cmd_1' })
+    await handler(dup)
+    const afterFirst = replies.length
+    await handler({ ...dup })
+    assert.ok(afterFirst > 0, 'the command answered')
+    assert.equal(replies.length, afterFirst, 'the repeated command produced nothing further')
   } finally {
     h.cleanup()
   }

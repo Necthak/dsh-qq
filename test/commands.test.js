@@ -29,13 +29,15 @@ import { registerQuestionAnswerer } from '../lib/bridge/questions.js'
 import { registerApprovalAnswerer } from '../lib/bridge/approvals.js'
 
 /** A normalized private message. */
+let messageCounter = 0
+
 function message(overrides = {}) {
   return {
     kind: 'private',
     peerId: 'OWNER',
     userId: 'OWNER',
     userName: '甲',
-    messageId: 'ROBOT1.0_abc',
+    messageId: `ROBOT1.0_cmd_${String((messageCounter += 1))}`,
     text: 'hi',
     attachments: [],
     ark: '',
