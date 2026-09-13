@@ -23,7 +23,7 @@ import { SessionMap } from '../lib/bridge/sessions.js'
 import { PendingInteractions } from '../lib/bridge/pending.js'
 import { createInboundHandler } from '../lib/bridge/inbound.js'
 import { createSessionCommands, sessionLabel } from '../lib/bridge/commands.js'
-import { compactNumber, currencySign, dayKey, formatCreditReport, lowBalances } from '../lib/bridge/credit.js'
+import { burnRate, compactNumber, currencySign, dayKey, daysRemaining, formatCreditReport, lowBalances, lowestBalance } from '../lib/bridge/credit.js'
 import { Outbound } from '../lib/bridge/outbound.js'
 import { registerQuestionAnswerer } from '../lib/bridge/questions.js'
 import { registerApprovalAnswerer } from '../lib/bridge/approvals.js'
@@ -863,4 +863,41 @@ test('the balance warning is off at threshold zero and silent when nothing is lo
   assert.deepEqual(lowBalances(snapshots, 5), [], 'a healthy balance says nothing')
   assert.deepEqual(lowBalances(null, 5), [])
   assert.deepEqual(lowBalances({ providers: { a: { displayName: 'A', balance: { currency: 'CNY', totalBalance: 'not a number' } } } }, 5), [])
+})
+
+test('the burn rate counts real money only, and skips days with no entry', () => {
+  const now = new Date('2026-09-13T12:00:00')
+  const ledger = { days: {
+    '2026-09-13': { 'deepseek-official': { m: { calls: 5, cost: 1.5 } }, 'opencode-go': { m: { calls: 900, cost: 0 } } },
+    '2026-09-12': { 'deepseek-official': { m: { calls: 3, cost: 0.5 } } },
+    // 09-11 has no entry at all: skipped, not counted as a zero-spend day.
+  } }
+  const rate = burnRate(ledger, now, 3)
+  assert.equal(rate.days, 2, 'only days with entries are averaged')
+  assert.equal(rate.perDay, 1, '(1.5 + 0.5) / 2')
+  // A subscription provider reports zero and must not dilute the figure.
+  assert.equal(burnRate({ days: { '2026-09-13': { sub: { m: { calls: 10, cost: 0 } } } } }, now, 3).perDay, 0)
+  assert.equal(burnRate(null, now).perDay, 0)
+})
+
+test('a balance estimate needs a real daily cost behind it', () => {
+  assert.equal(daysRemaining(20, 0.05), 400)
+  assert.equal(daysRemaining(20, 0), null, 'no spend means no meaningful estimate')
+  assert.equal(daysRemaining(undefined, 5), null)
+  const snapshots = { providers: {
+    a: { displayName: 'A', balance: { currency: 'CNY', totalBalance: '20.23' } },
+    b: { displayName: 'B', balance: { currency: 'CNY', totalBalance: '3.10' } },
+    c: { displayName: 'C', balance: { currency: 'CNY', totalBalance: '20.23' } },
+  } }
+  assert.deepEqual(lowestBalance(snapshots), { amount: 3.1, currency: 'CNY' }, 'the smallest balance runs out first')
+  assert.equal(lowestBalance(null), null)
+})
+
+test('the report shows a projection only when money is actually being charged', () => {
+  const now = new Date('2026-09-13T12:00:00')
+  const snapshots = { providers: { a: { displayName: 'A', balance: { currency: 'CNY', totalBalance: '20.00' } } } }
+  const spend = { days: { '2026-09-13': { a: { m: { calls: 1, cost: 2 } } } } }
+  assert.match(formatCreditReport({ snapshots, ledger: spend, now }), /近 1 天平均：¥2\.00\/天 · 余额约可用 10 天/)
+  const subscription = { days: { '2026-09-13': { a: { m: { calls: 900, cost: 0 } } } } }
+  assert.doesNotMatch(formatCreditReport({ snapshots, ledger: subscription, now }), /余额约可用/)
 })
