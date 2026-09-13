@@ -22,7 +22,8 @@ import { join } from 'node:path'
 import { SessionMap } from '../lib/bridge/sessions.js'
 import { PendingInteractions } from '../lib/bridge/pending.js'
 import { createInboundHandler } from '../lib/bridge/inbound.js'
-import { createSessionCommands, formatUsage, sessionLabel } from '../lib/bridge/commands.js'
+import { createSessionCommands, sessionLabel } from '../lib/bridge/commands.js'
+import { compactNumber, dayKey, formatCreditReport } from '../lib/bridge/credit.js'
 import { Outbound } from '../lib/bridge/outbound.js'
 import { registerQuestionAnswerer } from '../lib/bridge/questions.js'
 import { registerApprovalAnswerer } from '../lib/bridge/approvals.js'
@@ -60,7 +61,7 @@ function recorder() {
  * @param options - sessions to bind, settings, and scripted Host answers.
  * @returns The handler plus the collaborators a test asserts on.
  */
-function harness({ settings = {}, bindings = [], sessionsList = [], cancelResult = { accepted: true }, scope, restart, busy, usage, screenshot, projects = [], archived = [] } = {}) {
+function harness({ settings = {}, bindings = [], sessionsList = [], cancelResult = { accepted: true }, scope, restart, busy, credit, screenshot, projects = [], archived = [] } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-qq-cmd-'))
   const sessions = new SessionMap({ path: join(dir, 'sessions.json'), log: () => {} })
   for (const [key, sessionId] of bindings) sessions.bind(key, sessionId)
@@ -89,7 +90,7 @@ function harness({ settings = {}, bindings = [], sessionsList = [], cancelResult
     settingsScope: scope === undefined ? { update: async (patch) => { updates.push(patch) } } : scope,
     restart,
     busy,
-    usage,
+    credit,
     screenshot,
     log: () => {},
   })
@@ -689,58 +690,72 @@ test('a failed preflight cancels the restart and reports the real error', async 
 
 // ── /usage and /screen ──────────────────────────────────────────────────────
 
-test('/usage reports the session figures the desktop also shows', async () => {
-  const asked = []
+test('/usage reports the balance, the plan, and today usage', async () => {
+  // The figures are DSH's own, so the phone cannot disagree with the desktop.
   const h = harness({
     bindings: [['private:OWNER', 'sess_1']],
-    usage: async (sessionId) => {
-      asked.push(sessionId)
-      return { turns: 12, steps: 86, llmMs: 252_000, toolMs: 96_000, decodeMs: 180_000, decodeTokens: 32_801_628, ttftMs: 12_000, ttftSteps: 40 }
-    },
+    credit: async () => ({
+      snapshots: {
+        providers: {
+          'deepseek-official': { provider: 'deepseek-official', displayName: 'DeepSeek', balance: { currency: 'CNY', totalBalance: '20.23', updatedAt: Date.now() } },
+          'opencode-go': { provider: 'opencode-go', displayName: 'opencode-go', plan: { windows: [{ key: '5h', percent: 0 }, { key: 'week', percent: 28, resetsAt: '2026-09-14T00:00:00.000Z' }] } },
+          'kimi-coding': { provider: 'kimi-coding', displayName: 'kimi-coding' },
+        },
+      },
+      ledger: { days: { [dayKey(new Date())]: { 'opencode-go': { 'deepseek-v4.1-flash': { calls: 97, inputTokens: 115_100, outputTokens: 84_500, cacheReadTokens: 32_900_000, cost: 0 } } } } },
+    }),
   })
   try {
     await h.handler(message({ text: '/usage' }))
-    assert.deepEqual(asked, ['sess_1'], 'the figures are for the bound session')
     const body = h.sent[0].text
-    assert.match(body, /轮次：12 · 步骤：86/)
-    assert.match(body, /模型耗时：4 分 12 秒 · 工具耗时：1 分 36 秒/)
-    assert.match(body, /输出 tokens：32,801,628/)
+    assert.match(body, /DeepSeek 余额：¥20\.23/)
+    assert.match(body, /opencode-go 套餐：5 小时 0% · 本周 28%/)
+    assert.match(body, /今日（\d\d-\d\d）/)
+    assert.match(body, /97 次 · 入 115\.1K · 出 84\.5K · 缓存 32\.9M/)
+    assert.doesNotMatch(body, /kimi-coding/, 'a provider with nothing to say is not listed')
+    assert.doesNotMatch(body, /轮次|步骤/, 'the session round counter was the part nobody wanted')
   } finally {
     h.cleanup()
   }
 })
 
-test('/usage explains an unreadable session instead of printing zeros', async () => {
-  const h = harness({ bindings: [['private:OWNER', 'sess_1']], usage: async () => null })
+test('/usage says so when DSH has not polled anything yet', async () => {
+  const h = harness({ bindings: [['private:OWNER', 'sess_1']], credit: async () => ({ snapshots: null, ledger: null }) })
   try {
     await h.handler(message({ text: '/usage' }))
-    assert.match(h.sent[0].text, /读不到本会话的用量/)
+    assert.match(h.sent[0].text, /读不到用量数据/)
   } finally {
     h.cleanup()
   }
-
-  const fresh = harness()
-  try {
-    await fresh.handler(message({ text: '/usage' }))
-    assert.match(fresh.sent[0].text, /还没有 DSH 会话/)
-  } finally {
-    fresh.cleanup()
-  }
 })
 
-test('a sub-second first token reads as milliseconds, not as zero seconds', () => {
-  const body = formatUsage({ turns: 1, steps: 2, ttftMs: 300, ttftSteps: 3 })
-  assert.match(body, /首 token 平均：100 毫秒/)
+test('the same balance under two provider ids is shown once', () => {
+  // `deepseek` and `deepseek-official` are two rows for one account; printing
+  // the same number twice reads as two accounts.
+  const body = formatCreditReport({
+    snapshots: { providers: {
+      'deepseek-official': { displayName: 'DeepSeek', balance: { currency: 'CNY', totalBalance: '20.23' } },
+      deepseek: { displayName: 'deepseek', balance: { currency: 'CNY', totalBalance: '20.23' } },
+    } },
+    ledger: null,
+  })
+  assert.equal(body.split('余额').length - 1, 1)
 })
 
-test('each session figure is optional and never faked', () => {
-  // A session that has only just started has turns and steps and nothing else;
-  // the line for a figure that does not exist must be absent, not zeroed.
-  const body = formatUsage({ turns: 1, steps: 1 })
-  assert.match(body, /轮次：1 · 步骤：1/)
-  assert.doesNotMatch(body, /模型耗时/)
-  assert.doesNotMatch(body, /输出 tokens/)
-  assert.doesNotMatch(body, /首 token/)
+test('a stale balance is dated, a fresh one is not', () => {
+  const now = new Date('2026-09-13T12:00:00')
+  const stale = formatCreditReport({ snapshots: { providers: { a: { displayName: 'A', balance: { currency: 'CNY', totalBalance: '1.00', updatedAt: now.getTime() - 3 * 3600_000 } } } }, ledger: null, now })
+  assert.match(stale, /3 小时前/)
+  const fresh = formatCreditReport({ snapshots: { providers: { a: { displayName: 'A', balance: { currency: 'CNY', totalBalance: '1.00', updatedAt: now.getTime() } } } }, ledger: null, now })
+  assert.doesNotMatch(fresh, /小时前/)
+})
+
+test('token counts are compacted the way a person reads them', () => {
+  assert.equal(compactNumber(470_026_749), '470.0M')
+  assert.equal(compactNumber(115_100), '115.1K')
+  assert.equal(compactNumber(812), '812')
+  assert.equal(compactNumber(0), '0')
+  assert.equal(compactNumber(undefined), '0')
 })
 
 test('/screen is owner-only', async () => {
