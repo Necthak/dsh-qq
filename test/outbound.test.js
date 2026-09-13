@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { SessionMap } from '../lib/bridge/sessions.js'
-import { Outbound, TurnCollector, extractText } from '../lib/bridge/outbound.js'
+import { Outbound, TurnCollector, canRenderAsMarkdown, extractText } from '../lib/bridge/outbound.js'
 import { MSG_TYPE } from '../lib/qq/api.js'
 
 /** A fake OpenAPI client that records every send body. */
@@ -322,4 +322,30 @@ test('a markdown table becomes readable lines, because QQ renders none', async (
   } finally {
     h.cleanup()
   }
+})
+
+test('a horizontal rule is not mistaken for a table', async () => {
+  // The delimiter check ran on a single line, and `---` matched it, so every
+  // report containing a rule was classified as a table and converted to plain
+  // text: the markdown path was never taken at all. The live A/B test that was
+  // supposed to confirm markdown rendering is what exposed this - both of its
+  // messages came back looking identical.
+  const h = harness({ markdownMode: 'auto' })
+  try {
+    await h.outbound.sendActive({
+      key: 'private:U1',
+      kind: 'private',
+      peerId: 'U1',
+      text: '## 报告\n\n- 一\n\n---\n\n结尾',
+    })
+    assert.equal(h.api.sent[0].body.msg_type, MSG_TYPE.markdown, 'a rule is not a table')
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('a delimiter row under a row of cells is still a table', () => {
+  assert.equal(canRenderAsMarkdown('| 项 | 值 |\n| --- | --- |\n| a | 1 |'), false)
+  assert.equal(canRenderAsMarkdown('项 | 值\n--- | ---\n1 | 2'), false, 'outer pipes are optional')
+  assert.equal(canRenderAsMarkdown('路径 a | b 是管道符'), true, 'a pipe in a sentence is not a table')
 })
