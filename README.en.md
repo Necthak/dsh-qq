@@ -111,6 +111,7 @@ Send these in QQ. Anything not starting with `/` is delivered to the agent as or
 | `/workspace` | List registered projects with numbers, and the current directories |
 | `/workspace <n\|path>` | Switch the working directory for new sessions (owner only) |
 | `/sessions [count]` | List recent sessions with titles, excluding archived ones |
+| `/find <query>` | Search session content; the hits become the current `/resume` listing |
 | `/resume <n\|session id>` | Rebind this conversation to an existing session (owner only) |
 | `/usage` | Balances, subscription windows, recent daily spend and remaining days, and today's tokens and cost |
 | `/screen [process]` | Capture the screen and send it here (owner only) |

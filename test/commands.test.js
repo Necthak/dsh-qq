@@ -63,7 +63,7 @@ function recorder() {
  * @param options - sessions to bind, settings, and scripted Host answers.
  * @returns The handler plus the collaborators a test asserts on.
  */
-function harness({ settings = {}, bindings = [], sessionsList = [], cancelResult = { accepted: true }, scope, restart, busy, credit, screenshot, projects = [], archived = [] } = {}) {
+function harness({ settings = {}, bindings = [], sessionsList = [], cancelResult = { accepted: true }, scope, restart, busy, credit, screenshot, projects = [], archived = [], search } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-qq-cmd-'))
   const sessions = new SessionMap({ path: join(dir, 'sessions.json'), log: () => {} })
   for (const [key, sessionId] of bindings) sessions.bind(key, sessionId)
@@ -82,6 +82,9 @@ function harness({ settings = {}, bindings = [], sessionsList = [], cancelResult
       prompt: async () => { throw new Error('a command must never reach the agent') },
       list: async () => ({ items: sessionsList }),
       cancel: async (request) => { cancels.push(request); return cancelResult },
+      // Only present when the test supplies one, mirroring a deployment that
+      // may or may not mount the session-query package.
+      ...(search === undefined ? {} : { search: (request, signal) => { signal?.throwIfAborted?.(); return search(request) } }),
     },
   }
 
@@ -94,6 +97,7 @@ function harness({ settings = {}, bindings = [], sessionsList = [], cancelResult
     busy,
     credit,
     screenshot,
+    search,
     log: () => {},
   })
 
@@ -902,4 +906,75 @@ test('the report shows a projection only when money is actually being charged', 
   assert.match(formatCreditReport({ snapshots, ledger: spend, now }), /近 1 天平均：¥2\.00\/天 · 余额约可用 10 天/)
   const subscription = { days: { '2026-09-13': { a: { m: { calls: 900, cost: 0 } } } } }
   assert.doesNotMatch(formatCreditReport({ snapshots, ledger: subscription, now }), /余额约可用/)
+})
+
+// ── /find ───────────────────────────────────────────────────────────────────
+
+test('/find searches session content and the hits become the /resume listing', async () => {
+  const asked = []
+  const h = harness({
+    bindings: [['private:OWNER', 'sess_now']],
+    sessionsList: [
+      { sessionId: 'sess_hit1', updatedAt: Date.UTC(2026, 8, 12), cwd: 'C:\work', projections: { asOfSeq: 1, values: { title: '部署脚本调试' } } },
+      { sessionId: 'sess_other', updatedAt: Date.UTC(2026, 8, 11), cwd: 'C:\work' },
+    ],
+    search: async (request) => {
+      asked.push(request)
+      return { items: [{ sessionId: 'sess_hit1', snippet: '把部署脚本里的端口改成 3080' }], hasMore: false }
+    },
+  })
+  try {
+    await h.handler(message({ text: '/find 部署' }))
+    assert.deepEqual(asked, [{ query: '部署' }], 'the query reaches DSH unchanged')
+    const body = h.sent[0].text
+    assert.match(body, /找到 1 个会话/)
+    assert.match(body, /1\. 部署脚本调试/, 'the hit is identified by its title, as /sessions would')
+    assert.match(body, /端口改成 3080/, 'and the matching line is shown')
+
+    // The operator can switch straight to a hit.
+    await h.handler(message({ text: '/resume 1' }))
+    assert.equal(h.sessions.get('private:OWNER').sessionId, 'sess_hit1')
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('/find explains itself when there is no query, no match, or no search service', async () => {
+  const h = harness({
+    sessionsList: [{ sessionId: 'a', updatedAt: 1, cwd: 'C:\work' }],
+    search: async () => ({ items: [], hasMore: false }),
+  })
+  try {
+    await h.handler(message({ text: '/find' }))
+    assert.match(h.sent[0].text, /用法：\/find/)
+
+    await h.handler(message({ text: '/find 不存在的东西', messageId: 'm2' }))
+    assert.match(h.sent[1].text, /没有找到/)
+  } finally {
+    h.cleanup()
+  }
+
+  // A deployment without the session-query package fails by design; an empty
+  // result would look like "no match" and hide the real reason.
+  const unavailable = harness({ search: async () => { throw new Error('session search is unavailable') } })
+  try {
+    await unavailable.handler(message({ text: '/find 任何' }))
+    assert.match(unavailable.sent[0].text, /会话搜索不可用/)
+  } finally {
+    unavailable.cleanup()
+  }
+})
+
+test('/find does not resurface an archived session', async () => {
+  const h = harness({
+    sessionsList: [{ sessionId: 'sess_arch', updatedAt: 1, cwd: 'C:\work' }],
+    archived: ['sess_arch'],
+    search: async () => ({ items: [{ sessionId: 'sess_arch', snippet: '很久以前' }], hasMore: false }),
+  })
+  try {
+    await h.handler(message({ text: '/find 很久' }))
+    assert.match(h.sent[0].text, /只出现在已归档的会话里/)
+  } finally {
+    h.cleanup()
+  }
 })
