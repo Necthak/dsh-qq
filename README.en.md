@@ -2,6 +2,8 @@
 
 [简体中文](README.md) | **English**
 
+[![test](https://github.com/Necthak/dsh-qq/actions/workflows/test.yml/badge.svg)](https://github.com/Necthak/dsh-qq/actions/workflows/test.yml) [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![node](https://img.shields.io/badge/node-%3E%3D22.13-brightgreen.svg)](https://nodejs.org)
+
 A DSH plugin that drives a local DeepSeek Harness session from an official QQ bot, so an agent running on a desktop machine can be operated from a phone.
 
 QQ messages are delivered as user messages in a DSH session. Agent replies, tool approval requests and `ask_user_question` prompts are routed back to QQ. The purpose is to remove the desktop from the loop for remote work.
@@ -187,7 +189,7 @@ npm test          # 295 unit tests
 
 - The test suite is offline: HTTP, WebSocket and DSH services are injected as doubles
 - After changing plugin code, send `/restart` in QQ to reload it (the replacement process imports from disk)
-- Please make sure `npm test` passes before committing
+- Please make sure `npm test` passes before committing; CI (`.github/workflows/test.yml`) runs it on Windows against Node 22 and 24
 
 ## Licence
 

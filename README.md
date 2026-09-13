@@ -2,6 +2,8 @@
 
 **简体中文** | [English](README.en.md)
 
+[![test](https://github.com/Necthak/dsh-qq/actions/workflows/test.yml/badge.svg)](https://github.com/Necthak/dsh-qq/actions/workflows/test.yml) [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![node](https://img.shields.io/badge/node-%3E%3D22.13-brightgreen.svg)](https://nodejs.org)
+
 通过官方 QQ 机器人在移动端操控本机 DeepSeek Harness 的 DSH 插件。
 
 QQ 消息被投递为 DSH 会话中的用户消息；agent 的回复、工具审批请求与 `ask_user_question` 提问均回传至 QQ。其目的是使远程场景下的 agent 驱动不必依赖桌面环境。
@@ -186,7 +188,7 @@ npm test          # 295 个单元测试
 
 - 测试全程离线：HTTP、WebSocket 与 DSH 服务均以替身注入
 - 插件代码改动后，可在 QQ 中发送 `/restart` 重新加载（新进程自磁盘导入）
-- 提交前请确保 `npm test` 全部通过
+- 提交前请确保 `npm test` 全部通过；CI（`.github/workflows/test.yml`）会在 Windows 上以 Node 22 与 24 各跑一遍
 
 ## 许可
 

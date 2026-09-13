@@ -1,0 +1,32 @@
+name: test
+
+# The plugin targets Windows: screenshots and the watchdog are PowerShell, and
+# several behaviours it compensates for were measured on that platform. The
+# suite itself is hermetic — HTTP, WebSocket and every DSH service are injected
+# doubles — so it runs anywhere, but Windows is the platform whose failures
+# matter, and `windows-latest` is free for public repositories.
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor declared in package.json, and the current release.
+        node: ['22.x', '24.x']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm test
