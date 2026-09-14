@@ -1,0 +1,13 @@
+# Line endings.
+#
+# This repository stores LF, and every tool that touches it writes LF. One file
+# was committed with CRLF and stayed the odd one out: each edit rewrote it
+# wholesale, so a 39-line change appeared as 581 changed lines, and after it was
+# "restored" the next edit churned it again. Declaring the convention stops that
+# class of noise, and makes a whole-file diff mean a whole-file change.
+* text=auto eol=lf
+
+# Binary files that must never be converted.
+*.png binary
+*.jpg binary
+*.ico binary
