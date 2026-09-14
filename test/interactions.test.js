@@ -68,7 +68,7 @@ function interaction(overrides = {}) {
  * @param options - settings and whether a session is bound.
  * @returns The handler plus recorded calls.
  */
-function harness({ settings = {}, bound = true, bindAs = 'private:OWNER' } = {}) {
+function harness({ settings = {}, bound = true, bindAs = 'private:OWNER', runCommand } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-qq-int-'))
   const sessions = new SessionMap({ path: join(dir, 'sessions.json'), log: () => {} })
   if (bound) sessions.bind(bindAs, 'sess_1')
@@ -99,6 +99,7 @@ function harness({ settings = {}, bound = true, bindAs = 'private:OWNER' } = {})
       ackInteraction: async (id, code) => { acks.push({ id, code }) },
     },
     onRejected: (value) => rejected.push(value),
+    runCommand,
   })
 
   return { handler, sent, selected, rejected, acks, pending, sessions, cleanup: () => rmSync(dir, { recursive: true, force: true }) }
@@ -486,6 +487,36 @@ test('a model button still refuses a non-owner, and says so', async () => {
     assert.equal(h.selected.length, 0)
     assert.match(h.sent[0].text, /只有 owner/)
     assert.deepEqual(h.acks, [{ id: 'INNER1', code: 4 }])
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('a menu button runs the command it names', async () => {
+  // The click is only a different way to say `/status`; it goes through the same
+  // command path, so admission, owner checks and output cannot drift from it.
+  const calls = []
+  const h = harness({ runCommand: async (request) => { calls.push(request) } })
+  try {
+    await h.handler(interaction({ buttonData: 'cmd|status' }))
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].name, 'status')
+    assert.equal(calls[0].key, 'private:OWNER')
+    assert.equal(calls[0].userId, 'OWNER', 'the clicking member is carried through, so owner checks still work')
+    assert.deepEqual(h.acks.map((a) => a.code), [0], 'the click is acknowledged as a success')
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('a failing menu command is reported instead of silently acknowledged', async () => {
+  const h = harness({ runCommand: async () => { throw new Error('只有 owner 可以截图。') } })
+  try {
+    await h.handler(interaction({ buttonData: 'cmd|screen' }))
+    const body = h.sent.map((entry) => entry.text).join(String.fromCharCode(10))
+    assert.match(body, /执行失败/)
+    assert.match(body, /只有 owner/, 'the command reason reaches the operator')
+    assert.deepEqual(h.acks.map((a) => a.code), [1], 'and the acknowledgement says it failed')
   } finally {
     h.cleanup()
   }

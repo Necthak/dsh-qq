@@ -100,9 +100,12 @@ The `deny` list takes precedence over admission in both modes.
 
 Send these in QQ. Anything not starting with `/` is delivered to the agent as ordinary input.
 
+**No slash needed**: when a whole message is exactly one of `状态`, `额度`, `用量`, `任务`, `会话`, `诊断`, `体检`, `截图`, `日志`, `菜单`, `帮助`, `新对话`, it means the corresponding command. The match is on the entire message, so 「任务完成了」 stays a sentence. Those words also work by voice, since the platform transcribes a voice message into exactly that text.
+
 | Command | Purpose |
 |---|---|
 | `/help` | Show help |
+| `/menu` | Send a shortcut menu of buttons (status, usage, todos, sessions, doctor, screen); one tap runs the command |
 | `/status` | Channel state, bound conversations, open interactions, current model, last send failure, current turn progress |
 | `/model` | List available models by provider, numbered; `←` marks the current one |
 | `/model <n> [effort]` | Switch model (owner only) |

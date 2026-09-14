@@ -524,3 +524,90 @@ test('a duplicate command is not executed twice either', async () => {
     h.cleanup()
   }
 })
+
+test('a shortcut word runs the command it stands for', async () => {
+  // Typing a slash on a phone is awkward, and a voice message arrives as
+  // exactly this text, so the words are the shortest path to a command.
+  const h = harness({ bindings: [['private:OWNER', 'sess_1']] })
+  try {
+    const handler = createInboundHandler({
+      ctx: { sessionController: { prompt: async () => { throw new Error('must not reach the agent') } } },
+      sessions: h.sessions,
+      outbound: { deliver: async (job) => { h.sent.push(job) }, sendActive: async (job) => { h.sent.push(job) } },
+      pending: new PendingInteractions({ log: () => {} }),
+      commands: createSessionCommands({
+        ctx: {},
+        sessions: h.sessions,
+        pending: new PendingInteractions({ log: () => {} }),
+        settingsScope: { update: async () => {} },
+        log: () => {},
+      }),
+      config: () => ({ mode: 'closed-agent', ownerOpenId: 'OWNER' }),
+      log: () => {},
+      ensureSession: async () => 'sess_1',
+      status: () => ({ gateway: 'online' }),
+      signal: h.controller.signal,
+    })
+
+    await handler(message({ text: '状态' }))
+    assert.ok(h.sent.length > 0, 'the shortcut produced the status answer')
+    assert.equal(h.prompts.length, 0, 'and never reached the agent')
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('a sentence that merely contains a shortcut word is not a command', async () => {
+  // Exact match on the whole message is what keeps this safe.
+  const h = harness({ bindings: [['private:OWNER', 'sess_1']] })
+  try {
+    const handler = createInboundHandler({
+      ctx: {
+        sessionController: {
+          prompt: async (request, signal) => { signal.throwIfAborted(); h.prompts.push({ request, signal }); return { accepted: true } },
+        },
+      },
+      sessions: h.sessions,
+      outbound: { deliver: async () => {}, sendActive: async () => {} },
+      pending: new PendingInteractions({ log: () => {} }),
+      config: () => ({ mode: 'closed-agent', ownerOpenId: 'OWNER' }),
+      log: () => {},
+      ensureSession: async () => 'sess_1',
+      status: () => ({}),
+      signal: h.controller.signal,
+    })
+
+    await handler(message({ text: '任务完成了' }))
+    await handler(message({ text: '看一下状态怎么样' }))
+    assert.equal(h.prompts.length, 2, 'both went to the agent as ordinary messages')
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('/menu answers with buttons that carry command payloads', async () => {
+  const h = harness({ bindings: [['private:OWNER', 'sess_1']] })
+  try {
+    const handler = createInboundHandler({
+      ctx: { sessionController: { prompt: async () => { throw new Error('must not reach the agent') } } },
+      sessions: h.sessions,
+      outbound: { deliver: async (job) => { h.sent.push(job) }, sendActive: async (job) => { h.sent.push(job) } },
+      pending: new PendingInteractions({ log: () => {} }),
+      config: () => ({ mode: 'closed-agent', ownerOpenId: 'OWNER' }),
+      log: () => {},
+      ensureSession: async () => 'sess_1',
+      status: () => ({}),
+      signal: h.controller.signal,
+    })
+
+    await handler(message({ text: '菜单' }))
+    const delivered = h.sent[0]
+    assert.match(delivered.text, /快捷菜单/)
+    const buttons = delivered.keyboard.content.rows.flatMap((row) => row.buttons)
+    assert.deepEqual(buttons.map((b) => b.action.data), ['cmd|status', 'cmd|usage', 'cmd|todos', 'cmd|sessions', 'cmd|doctor', 'cmd|screen'])
+    for (const b of buttons) assert.ok(b.action.unsupport_tips !== '', 'every button keeps the required field')
+    assert.equal(h.prompts.length, 0)
+  } finally {
+    h.cleanup()
+  }
+})
