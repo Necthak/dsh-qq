@@ -637,8 +637,10 @@ test('every advertised command is reachable without its slash', async () => {
 test('a mention before a command does not hide it', async () => {
   // In a group the natural way to address the bot is to mention it, and the
   // platform puts `<@openid>` into the body itself: `/usage` then arrives as
-  // `<@ABC> /usage`. Before this, that message stopped being a command and was
-  // handed to the agent as ordinary text.
+  // `<@ABC> /usage`. The first fix for this fell back to the original text
+  // whenever the word was not a shortcut - which is every slash command - so the
+  // mention came straight back. This asserts the command actually ran, rather
+  // than that something was sent: a failure path sends something too.
   const h = harness({ bindings: [['group:GROUP', 'sess_g']] })
   try {
     const handler = createInboundHandler({
@@ -653,15 +655,17 @@ test('a mention before a command does not hide it', async () => {
       signal: h.controller.signal,
     })
 
-    await handler(message({ kind: 'group', peerId: 'GROUP', userId: 'OWNER', text: '<@ABC> /usage' }))
-    assert.ok(h.sent.length > 0, 'the slash command ran despite the mention')
+    await handler(message({ kind: 'group', peerId: 'GROUP', userId: 'OWNER', text: '<@ABC> /help' }))
+    const body = h.sent.map((entry) => entry.text).join(String.fromCharCode(10))
+    assert.match(body, /DSH QQ 桥接/, 'the help command ran')
+    assert.doesNotMatch(body, /<@ABC>/, 'and the mention did not survive into the command')
     assert.equal(h.prompts.length, 0)
   } finally {
     h.cleanup()
   }
 })
 
-test('a mention before a shortcut word works too, and a mention alone does not', async () => {
+test('a mention before a shortcut word works too, and ordinary text keeps its mention', async () => {
   const h = harness({ bindings: [['group:GROUP', 'sess_g']] })
   try {
     const handler = createInboundHandler({
@@ -680,8 +684,10 @@ test('a mention before a shortcut word works too, and a mention alone does not',
       signal: h.controller.signal,
     })
 
-    await handler(message({ kind: 'group', peerId: 'GROUP', userId: 'OWNER', text: '<@ABC> <@DEF> 状态' }))
-    assert.ok(h.sent.length > 0, 'two mentions are stripped as well')
+    // `帮助` is the shortcut for `/help`, which this handler answers itself, so
+    // the assertion does not depend on the command module being wired here.
+    await handler(message({ kind: 'group', peerId: 'GROUP', userId: 'OWNER', text: '<@ABC> <@DEF> 帮助' }))
+    assert.match(h.sent.map((e) => e.text).join(String.fromCharCode(10)), /DSH QQ 桥接/, 'the shortcut ran')
     assert.equal(h.prompts.length, 0)
 
     // A mention with ordinary text stays ordinary text, and the mention is kept:
