@@ -13,6 +13,10 @@
 - **待真机验证**：markdown 渲染（上一次 A/B 因 bug 无效，需重启后重测）、`/find` 的实际搜索、`/doctor` 的首次实跑。
 - 已知未修的 bug：无。
 
+### 已知问题
+
+- **provider 偶发 400：`The reasoning_content in the thinking mode must be passed back to the API`**（Console Go 路由）。表现为 agent 回合失败并把原文转发到 QQ。同一会话的后续回合正常，因此判断与**历史被改写**有关（本会话的上下文曾压缩，压缩会重写助手回合并丢掉 `reasoning_content`，而该 provider 在 thinking 模式下要求原样回传）。**复发时的绕法**：`/new` 开新会话，或用 `/model` 换到非 thinking 的路由。根治在适配器/provider 一侧，不在桥接。`agent/error` 现在也会写入 `/log`，便于下次定位。
+
 ### 下次继续时
 
 1. 问用户是否已授权 `workflow`，是则推送整批并修正 Release 指向。
