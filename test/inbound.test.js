@@ -585,33 +585,6 @@ test('a sentence that merely contains a shortcut word is not a command', async (
   }
 })
 
-test('/menu answers with buttons that carry command payloads', async () => {
-  const h = harness({ bindings: [['private:OWNER', 'sess_1']] })
-  try {
-    const handler = createInboundHandler({
-      ctx: { sessionController: { prompt: async () => { throw new Error('must not reach the agent') } } },
-      sessions: h.sessions,
-      outbound: { deliver: async (job) => { h.sent.push(job) }, sendActive: async (job) => { h.sent.push(job) } },
-      pending: new PendingInteractions({ log: () => {} }),
-      config: () => ({ mode: 'closed-agent', ownerOpenId: 'OWNER' }),
-      log: () => {},
-      ensureSession: async () => 'sess_1',
-      status: () => ({}),
-      signal: h.controller.signal,
-    })
-
-    await handler(message({ text: '菜单' }))
-    const delivered = h.sent[0]
-    assert.match(delivered.text, /快捷菜单/)
-    const buttons = delivered.keyboard.content.rows.flatMap((row) => row.buttons)
-    assert.deepEqual(buttons.map((b) => b.action.data), ['cmd|status', 'cmd|usage', 'cmd|todos', 'cmd|sessions', 'cmd|doctor', 'cmd|screen'])
-    for (const b of buttons) assert.ok(b.action.unsupport_tips !== '', 'every button keeps the required field')
-    assert.equal(h.prompts.length, 0)
-  } finally {
-    h.cleanup()
-  }
-})
-
 test('a shortcut resolves to one command, and only for a whole message', () => {
   // One word per command: a table with two spellings for the same thing is
   // longer to remember than the commands it replaces.
@@ -656,6 +629,67 @@ test('every advertised command is reachable without its slash', async () => {
       assert.ok(help.includes(`/${name}`), `/${name} is advertised`)
     }
     assert.ok(COMMAND_NAMES.has(shortcutCommand('帮助')), 'the Chinese word points at an advertised command')
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('a mention before a command does not hide it', async () => {
+  // In a group the natural way to address the bot is to mention it, and the
+  // platform puts `<@openid>` into the body itself: `/usage` then arrives as
+  // `<@ABC> /usage`. Before this, that message stopped being a command and was
+  // handed to the agent as ordinary text.
+  const h = harness({ bindings: [['group:GROUP', 'sess_g']] })
+  try {
+    const handler = createInboundHandler({
+      ctx: { sessionController: { prompt: async () => { throw new Error('a command must never reach the agent') } } },
+      sessions: h.sessions,
+      outbound: { deliver: async (job) => { h.sent.push(job) }, sendActive: async (job) => { h.sent.push(job) } },
+      pending: new PendingInteractions({ log: () => {} }),
+      config: () => ({ mode: 'chat', allow: ['OWNER'], ownerOpenId: 'OWNER' }),
+      log: () => {},
+      ensureSession: async () => 'sess_g',
+      status: () => ({}),
+      signal: h.controller.signal,
+    })
+
+    await handler(message({ kind: 'group', peerId: 'GROUP', userId: 'OWNER', text: '<@ABC> /usage' }))
+    assert.ok(h.sent.length > 0, 'the slash command ran despite the mention')
+    assert.equal(h.prompts.length, 0)
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('a mention before a shortcut word works too, and a mention alone does not', async () => {
+  const h = harness({ bindings: [['group:GROUP', 'sess_g']] })
+  try {
+    const handler = createInboundHandler({
+      ctx: {
+        sessionController: {
+          prompt: async (request, signal) => { signal.throwIfAborted(); h.prompts.push({ request, signal }); return { accepted: true } },
+        },
+      },
+      sessions: h.sessions,
+      outbound: { deliver: async (job) => { h.sent.push(job) }, sendActive: async (job) => { h.sent.push(job) } },
+      pending: new PendingInteractions({ log: () => {} }),
+      config: () => ({ mode: 'chat', allow: ['OWNER'], ownerOpenId: 'OWNER' }),
+      log: () => {},
+      ensureSession: async () => 'sess_g',
+      status: () => ({}),
+      signal: h.controller.signal,
+    })
+
+    await handler(message({ kind: 'group', peerId: 'GROUP', userId: 'OWNER', text: '<@ABC> <@DEF> 状态' }))
+    assert.ok(h.sent.length > 0, 'two mentions are stripped as well')
+    assert.equal(h.prompts.length, 0)
+
+    // A mention with ordinary text stays ordinary text, and the mention is kept:
+    // only detection sees the stripped copy.
+    await handler(message({ kind: 'group', peerId: 'GROUP', userId: 'OWNER', text: '<@ABC> 你好' }))
+    assert.equal(h.prompts.length, 1)
+    const delivered = JSON.stringify(h.prompts[0].request)
+    assert.match(delivered, /<@ABC> 你好/, 'the agent still receives the body as it was sent')
   } finally {
     h.cleanup()
   }

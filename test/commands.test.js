@@ -1176,14 +1176,14 @@ test('/menu install is owner-only and reports what happened', async () => {
     assert.match(body, /跳过：单聊/)
     assert.match(body, /按发送/)
 
-    // A bare `/menu` is the inline button panel, not the install usage: the two
-    // are different surfaces, and the panel is what a bare word should get.
+    // A bare `/menu` explains where the panel lives; it no longer sends buttons,
+    // because the platform's own dropdown is the better surface for them.
     await h.handler(message({ text: '/menu', messageId: 'm2' }))
-    assert.match(h.sent[1].text, /快捷菜单/)
-    assert.ok(h.sent[1].keyboard !== undefined, 'and it carries buttons')
+    assert.match(h.sent[1].text, /下拉选择器/)
+    assert.equal(h.sent[1].keyboard, undefined, 'and it sends no buttons')
 
     await h.handler(message({ text: '/menu 乱写的参数', messageId: 'm3' }))
-    assert.match(h.sent[2].text, /用法：\/menu install/)
+    assert.match(h.sent[2].text, /\/menu install/)
   } finally {
     h.cleanup()
   }

@@ -100,13 +100,12 @@ The `deny` list takes precedence over admission in both modes.
 
 Send these in QQ. Anything not starting with `/` is delivered to the agent as ordinary input.
 
-**No slash needed.** A whole message that is exactly a command name means that command, case-insensitively: `status`, `usage`, `todos`, `sessions`, `doctor`, `screen`, `log`, `menu`, `help`, `new`, `find`, `model`, `workspace`, `resume`, `stop`, `restart`. Chinese has one word per command and **no synonyms** - a table of alternative spellings is harder to remember than the commands it replaces: `状态`, `额度`, `任务`, `会话`, `继续`, `模型`, `搜索`, `诊断`, `截图`, `日志`, `重启`, `停止`, `新对话`, `重置`, `工作区`, `菜单`, `帮助`. The match is on the entire message, so 「任务完成了」 stays a sentence, and those words work by voice too, since the platform transcribes a voice message into exactly that text.
+**No slash needed.** A whole message that is exactly a command name means that command, case-insensitively: `status`, `usage`, `todos`, `sessions`, `doctor`, `screen`, `log`, `menu`, `help`, `new`, `find`, `model`, `workspace`, `resume`, `stop`, `restart`. Chinese has one word per command and **no synonyms** - a table of alternative spellings is harder to remember than the commands it replaces: `状态`, `额度`, `任务`, `会话`, `继续`, `模型`, `搜索`, `诊断`, `截图`, `日志`, `重启`, `停止`, `新对话`, `重置`, `工作区`, `菜单`, `帮助`. The match is on the entire message, so 「任务完成了」 stays a sentence, and those words work by voice too, since the platform transcribes a voice message into exactly that text - which is the one thing the dropdown cannot do. A leading @-mention is ignored, so `@bot /usage` and 「@bot 状态」 work in a group.
 
 | Command | Purpose |
 |---|---|
 | `/help` | Show help |
-| `/menu` | Send a shortcut menu of buttons (status, usage, todos, sessions, doctor, screen); one tap runs the command |
-| `/menu install` | Install the platform's **instruction panel** (owner only): permanent, nothing to remember; a tap fills the input box with the command |
+| `/menu install` | Install or update the platform's **instruction panel** in the `/` picker (owner only): a tap fills the input box with the command; existing panels are refreshed at start-up |
 | `/status` | Channel state, bound conversations, open interactions, current model, last send failure, current turn progress |
 | `/model` | List available models by provider, numbered; `←` marks the current one |
 | `/model <n> [effort]` | Switch model (owner only) |
