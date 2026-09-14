@@ -6,8 +6,9 @@
 
 ## 当前状态（2026-09-13 夜）
 
-- **9 个提交在本地，未推送** ✓。推送被 GitHub 拒收：`gh` 令牌缺 `workflow` 权限，而批次里含 `.github/workflows/test.yml`。解除方式：`gh auth refresh -h github.com -s workflow`，之后推送并把 `v0.1.0`（当前指向旧提交 `5f8af0a`）移到正确提交。
+- **11 个提交在本地，未推送** ✓（换行符已统一为 LF，并新增 `.gitattributes` 声明约定）。推送被 GitHub 拒收：`gh` 令牌缺 `workflow` 权限，而批次里含 `.github/workflows/test.yml`。解除方式：`gh auth refresh -h github.com -s workflow`，之后推送并把 `v0.1.0`（当前指向旧提交 `5f8af0a`）移到正确提交。
 - 312 项单元测试全绿，插件自检通过，工作区干净。
+- 批次内部的提交历史里仍留有换行符造成的整文件 diff（端点已干净）。若希望公开历史也干净，可在推送前把这批压缩成按功能划分的少数几个提交。
 - 已在真机验证：表格渲染（`· 项：余额 · 值：¥20.23`）、重复消息去重、`ask_user_question` 按钮化提问。
 - **待真机验证**：markdown 渲染（上一次 A/B 因 bug 无效，需重启后重测）、`/find` 的实际搜索、`/doctor` 的首次实跑。
 - 已知未修的 bug：无。
