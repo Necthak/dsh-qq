@@ -334,3 +334,30 @@ test('an upload part gets the longer deadline, not the API one', async () => {
   const put = seen.find((entry) => entry.method === 'PUT')
   assert.ok(put !== undefined && put.hasSignal, 'the chunk upload is bounded too')
 })
+
+test('panel calls use the /v2 prefix every other API call uses', async () => {
+  // The first version asked for `/panels`, and the platform answered
+  // "不支持的调用" - an unsupported call - because the base URL carries no
+  // version segment and each path must bring its own. This asserts the paths
+  // rather than the behaviour, because that is what was wrong.
+  const fetchImpl = stubFetch([
+    { body: { records: [] } },
+    { body: { panel_id: 'p_1' } },
+    { body: { code: 0 } },
+  ])
+  const api = new QqApi({ tokens, fetchImpl, baseUrl: 'https://example.test' })
+  await api.listPanels()
+  await api.createPanel({ scope: 'group', target_type: 'specific', group_openids: ['G'], panel: { items: [], remark: 'dsh-qq' } })
+  await api.updatePanel('p_1', { items: [], remark: 'dsh-qq' })
+
+  const calls = fetchImpl.calls
+  assert.equal(calls[0].method, 'GET')
+  assert.match(calls[0].url, /\/v2\/panels$/)
+  assert.equal(calls[1].method, 'POST')
+  assert.match(calls[1].url, /\/v2\/panels$/)
+  assert.equal(calls[2].method, 'PUT')
+  assert.match(calls[2].url, /\/v2\/panels\/p_1$/)
+  assert.equal(calls[1].body.scope, 'group')
+  assert.equal(calls[1].body.panel.remark, 'dsh-qq')
+  assert.equal(calls[2].body.panel.remark, 'dsh-qq', 'the update wraps the panel, not the item list')
+})
