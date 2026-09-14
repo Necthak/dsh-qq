@@ -24,6 +24,7 @@ import { PendingInteractions } from '../lib/bridge/pending.js'
 import { createInboundHandler } from '../lib/bridge/inbound.js'
 import { createSessionCommands, formatDoctor, formatPanelInstall, formatTodos, sessionLabel } from '../lib/bridge/commands.js'
 import { PANEL_ITEM_LIMIT, PANEL_REMARK, installPanels, panelItems } from '../lib/bridge/panel.js'
+import { COMMAND_ALIASES, COMMAND_NAMES } from '../lib/bridge/inbound.js'
 import { burnRate, compactNumber, currencySign, dayKey, daysRemaining, formatCreditReport, lowBalances, lowestBalance } from '../lib/bridge/credit.js'
 import { Outbound } from '../lib/bridge/outbound.js'
 import { registerQuestionAnswerer } from '../lib/bridge/questions.js'
@@ -1198,4 +1199,33 @@ test('/menu install is owner-only and reports what happened', async () => {
   } finally {
     member.cleanup()
   }
+})
+
+test('the three command surfaces cannot drift apart', () => {
+  // This is the test the operator asked for without asking for it: the panel
+  // listed ten commands while the bridge answered seventeen, because the panel,
+  // the shortcut words and the command names were three hand-written lists with
+  // nothing tying them together. `/restart` was missing from the panel and
+  // unnoticed until somebody looked for it.
+  const modifiers = new Set(['steer', 'queue'])
+  const panel = panelItems().map((item) => item.name)
+  const chinese = new Set(COMMAND_ALIASES.values())
+
+  for (const name of COMMAND_NAMES) {
+    // `/steer` and `/queue` exist to carry text into a running turn, so a button
+    // that only fills the input box would leave the sentence unfinished anyway.
+    if (modifiers.has(name)) continue
+    assert.ok(panel.includes(`/${name}`), `/${name} must appear in the panel`)
+    assert.ok(chinese.has(name), `${name} must have a Chinese shortcut word`)
+  }
+
+  // And the other direction: the panel must not offer something that is not a
+  // command, and no two commands may share one word.
+  for (const item of panelItems()) {
+    assert.ok(COMMAND_NAMES.has(item.name.slice(1)), `${item.name} is not a command`)
+  }
+  // The modifiers are not in COMMAND_NAMES at all, so the count is simply the
+  // number of commands: one word per command and no synonyms.
+  assert.equal(chinese.size, COMMAND_NAMES.size, 'one word per command, no synonyms')
+  assert.equal(new Set(panel).size, panel.length, 'no duplicate panel entries')
 })
