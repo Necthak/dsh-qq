@@ -1229,3 +1229,29 @@ test('the three command surfaces cannot drift apart', () => {
   assert.equal(chinese.size, COMMAND_NAMES.size, 'one word per command, no synonyms')
   assert.equal(new Set(panel).size, panel.length, 'no duplicate panel entries')
 })
+
+test('a start-up refresh updates an existing panel and never creates one', async () => {
+  // The panel is a copy of this build's command list, so it goes stale the
+  // moment the list changes: the operator opened a picker offering ten commands
+  // while the bridge answered seventeen. Refreshing at start-up keeps it honest,
+  // but an operator who deleted their panel meant it, so absence is respected.
+  const calls = []
+  const withPanel = {
+    listPanels: async (scope) => ({ records: [{ panel_id: 'p_1', scope, panel: { remark: PANEL_REMARK } }] }),
+    createPanel: async () => { calls.push('create'); return { panel_id: 'p_new' } },
+    updatePanel: async (id) => { calls.push(`update:${id}`) },
+  }
+  const refreshed = await installPanels({ api: withPanel, targets: [{ scope: 'group', ids: ['G'] }], existingOnly: true })
+  assert.deepEqual(refreshed, [{ scope: 'group', action: 'updated', panelId: 'p_1' }])
+  assert.deepEqual(calls, ['update:p_1'])
+
+  calls.length = 0
+  const withoutPanel = {
+    listPanels: async () => ({ records: [] }),
+    createPanel: async () => { calls.push('create'); return { panel_id: 'p_new' } },
+    updatePanel: async () => { calls.push('update') },
+  }
+  const absent = await installPanels({ api: withoutPanel, targets: [{ scope: 'group', ids: ['G'] }], existingOnly: true })
+  assert.deepEqual(absent, [{ scope: 'group', action: 'absent' }])
+  assert.deepEqual(calls, [], 'a deleted panel is not resurrected')
+})
