@@ -1128,7 +1128,7 @@ test('installing creates a panel once and updates it thereafter', async () => {
   const created = []
   const updated = []
   const api = {
-    listPanels: async () => ({ records: [] }),
+    listPanels: async (scope) => { assert.equal(typeof scope, 'string'); return { records: [] } },
     createPanel: async (payload) => { created.push(payload); return { panel_id: 'p_1' } },
     updatePanel: async (id, panel) => { updated.push({ id, panel }) },
   }
@@ -1139,7 +1139,7 @@ test('installing creates a panel once and updates it thereafter', async () => {
   assert.equal(created[0].panel.remark, PANEL_REMARK)
 
   const existing = {
-    listPanels: async () => ({ records: [{ panel_id: 'p_1', scope: 'group', panel: { remark: PANEL_REMARK } }] }),
+    listPanels: async (scope) => ({ records: [{ panel_id: 'p_1', scope, panel: { remark: PANEL_REMARK } }] }),
     createPanel: async () => { throw new Error('must not create a second panel') },
     updatePanel: async (id, panel) => { updated.push({ id, panel }) },
   }

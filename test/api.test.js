@@ -346,13 +346,13 @@ test('panel calls use the /v2 prefix every other API call uses', async () => {
     { body: { code: 0 } },
   ])
   const api = new QqApi({ tokens, fetchImpl, baseUrl: 'https://example.test' })
-  await api.listPanels()
+  await api.listPanels('group')
   await api.createPanel({ scope: 'group', target_type: 'specific', group_openids: ['G'], panel: { items: [], remark: 'dsh-qq' } })
   await api.updatePanel('p_1', { items: [], remark: 'dsh-qq' })
 
   const calls = fetchImpl.calls
   assert.equal(calls[0].method, 'GET')
-  assert.match(calls[0].url, /\/v2\/panels$/)
+  assert.match(calls[0].url, /\/v2\/panels\?scope=group$/, 'scope is required: without it the platform answers 40030011')
   assert.equal(calls[1].method, 'POST')
   assert.match(calls[1].url, /\/v2\/panels$/)
   assert.equal(calls[2].method, 'PUT')
