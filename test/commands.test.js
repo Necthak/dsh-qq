@@ -559,7 +559,7 @@ test('/help advertises every command the bridge answers', async () => {
   try {
     await h.handler(message({ text: '/help' }))
     const body = h.sent[0].text
-    for (const command of ['/status', '/new', '/stop', '/model', '/sessions', '/resume', '/workspace']) {
+    for (const command of ['/status', '/new', '/stop', '/model', '/sessions', '/resume', '/workspace', '/usage', '/screen', '/log', '/doctor', '/todos', '/find', '/menu', '/restart']) {
       assert.ok(body.includes(command), `${command} must be discoverable from /help`)
     }
   } finally {

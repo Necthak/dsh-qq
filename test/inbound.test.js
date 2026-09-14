@@ -6,7 +6,7 @@ import { join } from 'node:path'
 
 import { SessionMap } from '../lib/bridge/sessions.js'
 import { PendingInteractions } from '../lib/bridge/pending.js'
-import { createInboundHandler } from '../lib/bridge/inbound.js'
+import { COMMAND_NAMES, createInboundHandler, shortcutCommand } from '../lib/bridge/inbound.js'
 import { createSessionCommands } from '../lib/bridge/commands.js'
 
 /** A normalized private message. */
@@ -607,6 +607,55 @@ test('/menu answers with buttons that carry command payloads', async () => {
     assert.deepEqual(buttons.map((b) => b.action.data), ['cmd|status', 'cmd|usage', 'cmd|todos', 'cmd|sessions', 'cmd|doctor', 'cmd|screen'])
     for (const b of buttons) assert.ok(b.action.unsupport_tips !== '', 'every button keeps the required field')
     assert.equal(h.prompts.length, 0)
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('a shortcut resolves to one command, and only for a whole message', () => {
+  // One word per command: a table with two spellings for the same thing is
+  // longer to remember than the commands it replaces.
+  assert.equal(shortcutCommand('状态'), 'status')
+  assert.equal(shortcutCommand('额度'), 'usage')
+  assert.equal(shortcutCommand('任务'), 'todos')
+  assert.equal(shortcutCommand('菜单'), 'menu')
+
+  // The English spelling needs no table: the command name itself works, in any
+  // case, so there is nothing extra to learn.
+  assert.equal(shortcutCommand('status'), 'status')
+  assert.equal(shortcutCommand('Status'), 'status')
+  assert.equal(shortcutCommand('STATUS'), 'status')
+  assert.equal(shortcutCommand('  todos  '), 'todos')
+
+  // A sentence that merely contains a word is an ordinary message.
+  assert.equal(shortcutCommand('任务完成了'), null)
+  assert.equal(shortcutCommand('看一下状态'), null)
+  assert.equal(shortcutCommand('status 怎么样'), null)
+  assert.equal(shortcutCommand('随便一句话'), null)
+})
+
+test('every advertised command is reachable without its slash', async () => {
+  // The set and the help text describe the same thing, so a command added to one
+  // and forgotten in the other fails here rather than surprising the operator.
+  const h = harness()
+  try {
+    const handler = createInboundHandler({
+      ctx: { sessionController: { prompt: async () => { throw new Error('must not reach the agent') } } },
+      sessions: h.sessions,
+      outbound: { deliver: async (job) => { h.sent.push(job) }, sendActive: async (job) => { h.sent.push(job) } },
+      pending: new PendingInteractions({ log: () => {} }),
+      config: () => ({ mode: 'closed-agent', ownerOpenId: 'OWNER' }),
+      log: () => {},
+      ensureSession: async () => 'sess_1',
+      status: () => ({}),
+      signal: h.controller.signal,
+    })
+    await handler(message({ text: '/help' }))
+    const help = h.sent.map((entry) => entry.text).join(String.fromCharCode(10))
+    for (const name of COMMAND_NAMES) {
+      assert.ok(help.includes(`/${name}`), `/${name} is advertised`)
+    }
+    assert.ok(COMMAND_NAMES.has(shortcutCommand('帮助')), 'the Chinese word points at an advertised command')
   } finally {
     h.cleanup()
   }
