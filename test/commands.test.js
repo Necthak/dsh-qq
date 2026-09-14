@@ -22,7 +22,7 @@ import { join } from 'node:path'
 import { SessionMap } from '../lib/bridge/sessions.js'
 import { PendingInteractions } from '../lib/bridge/pending.js'
 import { createInboundHandler } from '../lib/bridge/inbound.js'
-import { createSessionCommands, formatDoctor, sessionLabel } from '../lib/bridge/commands.js'
+import { createSessionCommands, formatDoctor, formatTodos, sessionLabel } from '../lib/bridge/commands.js'
 import { burnRate, compactNumber, currencySign, dayKey, daysRemaining, formatCreditReport, lowBalances, lowestBalance } from '../lib/bridge/credit.js'
 import { Outbound } from '../lib/bridge/outbound.js'
 import { registerQuestionAnswerer } from '../lib/bridge/questions.js'
@@ -63,7 +63,7 @@ function recorder() {
  * @param options - sessions to bind, settings, and scripted Host answers.
  * @returns The handler plus the collaborators a test asserts on.
  */
-function harness({ settings = {}, bindings = [], sessionsList = [], cancelResult = { accepted: true }, scope, restart, busy, credit, screenshot, projects = [], archived = [], search, readLog, doctor } = {}) {
+function harness({ settings = {}, bindings = [], sessionsList = [], cancelResult = { accepted: true }, scope, restart, busy, credit, screenshot, projects = [], archived = [], search, readLog, doctor, todos } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-qq-cmd-'))
   const sessions = new SessionMap({ path: join(dir, 'sessions.json'), log: () => {} })
   for (const [key, sessionId] of bindings) sessions.bind(key, sessionId)
@@ -100,6 +100,7 @@ function harness({ settings = {}, bindings = [], sessionsList = [], cancelResult
     search,
     readLog,
     doctor,
+    todos,
     log: () => {},
   })
 
@@ -1050,4 +1051,57 @@ test('a failing check is called out and points at the log', () => {
   assert.match(body, /❌ 看门狗已消失/)
   assert.match(body, /结论：1 项异常/)
   assert.match(body, /\/log/, 'the verdict says where to look next')
+})
+
+// ── /todos ──────────────────────────────────────────────────────────────────
+
+test('/todos renders the agent task list with a progress line', async () => {
+  const asked = []
+  const h = harness({
+    bindings: [['private:OWNER', 'sess_1']],
+    todos: async (sessionId) => {
+      asked.push(sessionId)
+      return [
+        { content: '读取现有实现', status: 'completed' },
+        { content: '改造审批应答器', status: 'in_progress' },
+        { content: '补测试', status: 'pending' },
+      ]
+    },
+  })
+  try {
+    await h.handler(message({ text: '/todos' }))
+    assert.deepEqual(asked, ['sess_1'], 'the list belongs to the bound session')
+    const body = h.sent[0].text
+    assert.match(body, /✅ 读取现有实现/)
+    assert.match(body, /🔄 改造审批应答器/)
+    assert.match(body, /⬜ 补测试/)
+    assert.match(body, /进度：1\/3 · 正在进行：改造审批应答器/)
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('/todos explains an empty list rather than inventing one', async () => {
+  // A turn that planned nothing and a turn that has not started look the same
+  // here, so the message says so instead of pretending to know which it is.
+  assert.match(formatTodos(null), /本轮没有任务清单/)
+  assert.match(formatTodos([]), /本轮没有任务清单/)
+
+  const h = harness({ bindings: [['private:OWNER', 'sess_1']], todos: async () => null })
+  try {
+    await h.handler(message({ text: '/todos' }))
+    assert.match(h.sent[0].text, /本轮没有任务清单/)
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('/todos asks for a session first when there is none', async () => {
+  const h = harness({ todos: async () => [] })
+  try {
+    await h.handler(message({ text: '/todos' }))
+    assert.match(h.sent[0].text, /还没有 DSH 会话/)
+  } finally {
+    h.cleanup()
+  }
 })

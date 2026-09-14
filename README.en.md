@@ -120,6 +120,7 @@ Send these in QQ. Anything not starting with `/` is delivered to the agent as or
 | `/screen [process]` | Capture the screen and send it here (owner only) |
 | `/log [lines]` | Read the plugin's recent log lines (owner only; 15 by default, 40 at most) |
 | `/doctor` | Actively check the channel, watchdog, credentials, owner, balance, sessions and last send failure (owner only) |
+| `/todos` | Show the agent's task list and progress for the current turn |
 | `/restart`, `/restart force` | Restart the DSH process (owner only; `force` is required while a turn is running) |
 
 ## Agent tools

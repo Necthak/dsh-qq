@@ -120,6 +120,7 @@ cd dsh-qq && npm install
 | `/screen [进程名]` | 截图并发送至本对话（仅 owner） |
 | `/log [行数]` | 查看最近的本插件日志（仅 owner，默认 15 条，最多 40） |
 | `/doctor` | 主动自检：通道、看门狗、凭据、owner、余额、会话与发送失败（仅 owner） |
+| `/todos` | 查看 agent 本轮的任务清单与进度（读取 DSH 的任务投影） |
 | `/restart`、`/restart force` | 重启 DSH 进程（仅 owner；回合运行中需 `force`） |
 
 ## agent 工具
