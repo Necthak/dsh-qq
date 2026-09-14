@@ -140,6 +140,18 @@ curl http://127.0.0.1:3080/dsh-qq/state                               # expect 4
 - **When editing a repository file from Python, pass `newline=''` explicitly.** The default text mode normalises CRLF to LF, so writing the file back turns every line into a change: that is how `test/outbound.test.js` acquired 540 phantom changed lines.
 - **Do not write Windows paths through Python string literals.** `\a`, `\t` and `\b` become control characters and leave invisible corruption in the file. Check for control characters after writing.
 
+## Three preconditions for session search (`/find`) in this deployment
+
+`/find` uses DSH's own `sessionController.search`, which is unavailable here by default. All three conditions must hold:
+
+1. **The index must be allowed to open.** The bundle configures `session-query-sqlite` with `openAt: never`, so search answers `session search is disabled`. The patch layer overrides it to **`first-search`**: no start-up cost, and the index is built when somebody first searches. The override must **repeat `path`** - an id-targeted override replaces that row's config rather than merging into it.
+2. **A legacy v0 session must not contain a descriptor the migration does not know.** `dsh-session-format-v0-to-v1` requires `subagent/descriptor` version 3; three bare-UUID sessions from August carry version 2, and the migration deliberately refuses them ("refuses unknown historical events even when ignorable"), failing the whole index build. They have been moved out of the sessions directory into `~/.dsh/sessions-quarantine/`, and can be moved back at any time.
+3. **The service must be stopped when profile configuration changes.** Editing `cordis.patch.yml` triggers the file watcher and a hot reload; the one measured reload tore the services down without rebuilding them, leaving a process that still held the port but served nothing - the GUI reported `sessionController is unavailable`, and the launcher refused to start a replacement because the port was busy. Only a machine restart cleared it. Stop the service first, or restart fully immediately after.
+
+## An empty scan result is a claim to verify
+
+While investigating condition 2, a script that walked every session log looking for `subagent/descriptor` reported no matches. That was false: it swallowed every frame's decompression failure with `except: pass`, and those three legacy files decode **not a single frame** (0/178, 0/362, 0/510). An empty result is an assertion to check before acting on it - a rule that had already been paid for once, when it led to deleting attachments that were still referenced.
+
 ## Storage
 
 | Content | Location | Cleaned by |
