@@ -22,7 +22,8 @@ import { join } from 'node:path'
 import { SessionMap } from '../lib/bridge/sessions.js'
 import { PendingInteractions } from '../lib/bridge/pending.js'
 import { createInboundHandler } from '../lib/bridge/inbound.js'
-import { createSessionCommands, formatDoctor, formatTodos, sessionLabel } from '../lib/bridge/commands.js'
+import { createSessionCommands, formatDoctor, formatPanelInstall, formatTodos, sessionLabel } from '../lib/bridge/commands.js'
+import { PANEL_ITEM_LIMIT, PANEL_REMARK, installPanels, panelItems } from '../lib/bridge/panel.js'
 import { burnRate, compactNumber, currencySign, dayKey, daysRemaining, formatCreditReport, lowBalances, lowestBalance } from '../lib/bridge/credit.js'
 import { Outbound } from '../lib/bridge/outbound.js'
 import { registerQuestionAnswerer } from '../lib/bridge/questions.js'
@@ -63,7 +64,7 @@ function recorder() {
  * @param options - sessions to bind, settings, and scripted Host answers.
  * @returns The handler plus the collaborators a test asserts on.
  */
-function harness({ settings = {}, bindings = [], sessionsList = [], cancelResult = { accepted: true }, scope, restart, busy, credit, screenshot, projects = [], archived = [], search, readLog, doctor, todos } = {}) {
+function harness({ settings = {}, bindings = [], sessionsList = [], cancelResult = { accepted: true }, scope, restart, busy, credit, screenshot, projects = [], archived = [], search, readLog, doctor, todos, installMenu } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-qq-cmd-'))
   const sessions = new SessionMap({ path: join(dir, 'sessions.json'), log: () => {} })
   for (const [key, sessionId] of bindings) sessions.bind(key, sessionId)
@@ -101,6 +102,7 @@ function harness({ settings = {}, bindings = [], sessionsList = [], cancelResult
     readLog,
     doctor,
     todos,
+    installMenu,
     log: () => {},
   })
 
@@ -1103,5 +1105,97 @@ test('/todos asks for a session first when there is none', async () => {
     assert.match(h.sent[0].text, /还没有 DSH 会话/)
   } finally {
     h.cleanup()
+  }
+})
+
+// ── /menu install (the platform instruction panel) ──────────────────────────
+
+test('the panel items are commands the bridge actually answers', () => {
+  const items = panelItems()
+  assert.ok(items.length <= PANEL_ITEM_LIMIT, 'the platform caps a panel at 20 items')
+  for (const item of items) {
+    assert.equal(item.type, 'command')
+    assert.ok(item.name.length <= 14, `${item.name} fits the platform name limit`)
+    assert.ok(item.desc.length <= 30, `${item.desc} fits the platform description limit`)
+    assert.ok(item.name.startsWith('/'), 'a tap fills the input box, so the name must be a usable command')
+  }
+  assert.ok(items.some((item) => item.name === '/status'))
+})
+
+test('installing creates a panel once and updates it thereafter', async () => {
+  // The platform caps a bot at twenty panels, so a reinstall must find its own
+  // panel by remark rather than creating a second one.
+  const created = []
+  const updated = []
+  const api = {
+    listPanels: async () => ({ records: [] }),
+    createPanel: async (payload) => { created.push(payload); return { panel_id: 'p_1' } },
+    updatePanel: async (id, panel) => { updated.push({ id, panel }) },
+  }
+  const first = await installPanels({ api, targets: [{ scope: 'group', ids: ['G1'] }] })
+  assert.deepEqual(first, [{ scope: 'group', action: 'created', panelId: 'p_1' }])
+  assert.equal(created[0].target_type, 'specific', 'only the bound conversations are affected')
+  assert.deepEqual(created[0].group_openids, ['G1'])
+  assert.equal(created[0].panel.remark, PANEL_REMARK)
+
+  const existing = {
+    listPanels: async () => ({ records: [{ panel_id: 'p_1', scope: 'group', panel: { remark: PANEL_REMARK } }] }),
+    createPanel: async () => { throw new Error('must not create a second panel') },
+    updatePanel: async (id, panel) => { updated.push({ id, panel }) },
+  }
+  const second = await installPanels({ api: existing, targets: [{ scope: 'group', ids: ['G1'] }] })
+  assert.deepEqual(second, [{ scope: 'group', action: 'updated', panelId: 'p_1' }])
+  assert.equal(updated.length, 1)
+})
+
+test('a scope with no conversations is skipped, and a failure is reported', async () => {
+  const api = {
+    listPanels: async () => ({ records: [] }),
+    createPanel: async () => { throw new Error('40030020 内容存在安全风险') },
+    updatePanel: async () => {},
+  }
+  const results = await installPanels({ api, targets: [{ scope: 'c2c', ids: [] }, { scope: 'group', ids: ['G1'] }] })
+  assert.deepEqual(results[0], { scope: 'c2c', action: 'skipped', reason: '还没有可用于该场景的会话' })
+  assert.equal(results[1].action, 'failed')
+  assert.match(results[1].reason, /安全风险/, 'the platform reason is carried through')
+})
+
+test('/menu install is owner-only and reports what happened', async () => {
+  const h = harness({
+    bindings: [['private:OWNER', 'sess_1']],
+    installMenu: async () => [
+      { scope: 'group', action: 'created', panelId: 'p_1' },
+      { scope: 'c2c', action: 'skipped', reason: '还没有可用于该场景的会话' },
+    ],
+  })
+  try {
+    await h.handler(message({ text: '/menu install' }))
+    const body = h.sent[0].text
+    assert.match(body, /已创建：群聊/)
+    assert.match(body, /跳过：单聊/)
+    assert.match(body, /按发送/)
+
+    // A bare `/menu` is the inline button panel, not the install usage: the two
+    // are different surfaces, and the panel is what a bare word should get.
+    await h.handler(message({ text: '/menu', messageId: 'm2' }))
+    assert.match(h.sent[1].text, /快捷菜单/)
+    assert.ok(h.sent[1].keyboard !== undefined, 'and it carries buttons')
+
+    await h.handler(message({ text: '/menu 乱写的参数', messageId: 'm3' }))
+    assert.match(h.sent[2].text, /用法：\/menu install/)
+  } finally {
+    h.cleanup()
+  }
+
+  const member = harness({
+    settings: { mode: 'chat', allow: ['MEMBER'], ownerOpenId: 'OWNER' },
+    bindings: [['group:GROUP', 'sess_g']],
+    installMenu: async () => [],
+  })
+  try {
+    await member.handler(message({ kind: 'group', peerId: 'GROUP', userId: 'MEMBER', text: '/menu install' }))
+    assert.match(member.sent[0].text, /只有 owner/)
+  } finally {
+    member.cleanup()
   }
 })

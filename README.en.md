@@ -106,6 +106,7 @@ Send these in QQ. Anything not starting with `/` is delivered to the agent as or
 |---|---|
 | `/help` | Show help |
 | `/menu` | Send a shortcut menu of buttons (status, usage, todos, sessions, doctor, screen); one tap runs the command |
+| `/menu install` | Install the platform's **instruction panel** (owner only): permanent, nothing to remember; a tap fills the input box with the command |
 | `/status` | Channel state, bound conversations, open interactions, current model, last send failure, current turn progress |
 | `/model` | List available models by provider, numbered; `←` marks the current one |
 | `/model <n> [effort]` | Switch model (owner only) |
