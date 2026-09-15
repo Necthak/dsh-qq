@@ -63,6 +63,34 @@ Six constraints apply:
 
 A button tap is handled as an ordinary message: it passes admission, then reaches the pending-interaction registry as exactly the same text a human would have typed. Parsing, re-prompting, timeouts, and the race against the desktop therefore share one path. The frame's `event_id` is itself a passive reply target, so answering a tap does not consume active-message quota.
 
+## The platform's instruction panel
+
+The bridge once sent a shortcut menu of its own buttons; the platform's instruction panel has replaced it. Three properties decided the choice:
+
+1. **The panel exists in group chats as well.** The platform's older "custom menu" is direct-chat only, and this deployment is driven mainly from a group, so an entry point confined to direct chats is of limited use.
+2. **A panel can be scoped to specific conversations.** It is installed with `target_type: specific` and an accompanying `group_openids` / `user_openids` list, so it covers only the conversations this bridge has bound (at most twenty per scope) and leaves every other user's interface untouched.
+3. **A panel survives restarts.** It carries a `remark`, which the platform stores but never displays, so a later install finds the same panel and updates it in place instead of accumulating new ones.
+
+The panel also costs no messages: a tap only **fills the input box with the item's name**, and the send button still has to be pressed. The items are therefore written as the commands themselves, which leaves one press between a tap and a correct command. `/steer` and `/queue` are excluded because they carry text, and a tap that filled the input box with them would leave the operator to finish the sentence.
+
+The panel is a **copy of this build's command list**, and it starts to lie the moment that list changes. That happened: the operator's picker kept offering ten commands while the bridge already answered seventeen. Every start-up therefore refreshes panels that exist, but **refreshes only and never creates**: deleting a panel is an explicit act, and rebuilding it at start-up would quietly undo that decision. Installing a panel is itself always an explicit act (`/menu install`, owner only), because it writes to the bot's own configuration rather than to the conversation.
+
+## Shortcut words and whole-message matching
+
+A command may be written without its slash, and Chinese has a further seventeen words, one per command and with no synonyms; a match requires the whole message and ignores case.
+
+**The shortcut words are the only command entry point that works by voice.** The platform transcribes a voice message into text, so the Chinese words and the command names can both be spoken, while a dropdown cannot be opened by voice - which is the main difference between the two, and the reason the shortcut words were kept. They also avoid a second table to maintain: English reuses the command name itself (`status` is `/status`) and only Chinese needs a lookup table, and **a table of synonyms is harder to remember than the commands it replaces**, so each command gets exactly one word.
+
+Because the match is on the whole message, 「任务完成了」 stays a sentence; and because it ignores case, `status`, `Status` and `STATUS` are equivalent.
+
+## Commands behind a leading mention
+
+The platform writes a mention into the message body itself: in a group, `@bot /usage` arrives as `<@ABC> /usage`. Command detection therefore saw a message beginning with a mention and `/usage` stopped being a command - a failure that actually occurred.
+
+Detection now strips one or more leading mentions, and **detection only**. The body handed to the agent is unchanged, because the mention is something the user wrote.
+
+The stripped copy must serve both the shortcut lookup and the slash test that follows it. The first fix used it for the shortcut lookup alone and fell back to the original text whenever the word was not a shortcut - which is every slash command - so the mention came straight back and `/usage` stayed broken. The tests in place at the time asserted only that something had been sent, and a failure path sends something too, so they passed while the feature was broken; they now assert the command's own output, and that the mention does not appear in it.
+
 ## Passive replies first
 
 |  | Active message | Passive message (carrying `msg_id`) |
@@ -79,6 +107,22 @@ The plugin therefore does two things:
 2. **Retries once on rejection.** If the platform still rejects with "expired", the dead target is cleared and the message is resent once as an active message. That retry is safe: an expired target proves the message was not delivered, so no duplicate is possible.
 
 For this reason **approval and question prompts use `deliver` (passive first, falling back to active) rather than `sendActive`**. These are the two message classes the bridge can least afford to lose: an approval that never arrives leaves the turn stalled while the operator sees nothing unusual. By the same reasoning, every send failure throws rather than returning silently, and is recorded under "last send failure" in `/status`.
+
+## Outbound encoding: one decision per message
+
+Whether an answer goes out as markdown or as plain text is **decided once, before it is split**, and the decision then travels with every chunk of that message. It used to be taken again for each chunk, which let the two disagree: the plain-text conversion removes the very feature the decision was based on (a table), so a body that had already been converted could be sent as markdown (`msg_type: 2`).
+
+Under `auto` the rule is: markdown whenever the platform renders the text faithfully. The platform supports bold, italics, lists, quotes and rules but does not render tables, so a table is the one case where plain text reads better - and that rule only holds because the plain-text path rewrites a table as `· header: value` lines. (An earlier version already claimed the fallback, but the converter had no table handling at all: a table arrived as a row of pipes in both encodings, and falling back to plain text merely cost the rest of the message its formatting.)
+
+A message carrying a keyboard is always markdown, because buttons render only on a markdown body. The `markdownMode` setting therefore decides only the messages that carry no buttons.
+
+The decision leaves a trace: every send records the encoding it used, and a fallback to plain text records its reason as well. Without that, "why did that one arrive flat" cannot be answered after the fact.
+
+## When a line of text is a table
+
+A table exists only where **a delimiter row sits directly beneath a row of cells**, and both lines must carry a pipe. `readTable` requires the candidate header row to start and end with `|`, the next line to be a delimiter row, and at least one body row after it; `canRenderAsMarkdown` applies the same condition to decide whether a piece of text contains a table.
+
+The earlier rule matched a delimiter on a single line, so `---` - an ordinary horizontal rule - matched too: every message containing a rule, which describes most reports, was classified as a table and converted to plain text, and the markdown path the rule exists to select was never taken at all. What exposed it was the live A/B test: the two messages under comparison rendered identically, and "identically" is precisely the sign that both had taken the same path.
 
 ## `/restart` implementation notes
 

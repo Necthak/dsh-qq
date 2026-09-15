@@ -82,30 +82,41 @@ Open the DSH settings page → General → **QQ 机器人** (QQ bot) card.
 
 The `deny` list takes precedence over admission in both modes.
 
-### Main settings
+### Settings
+
+The table below corresponds one-to-one with the configuration schema in `lib/index.js`.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `busyDelivery` | `steer` | How a message arriving mid-turn is delivered; `/steer` and `/queue` override it per message |
-| `markdownMode` | `auto` | Message encoding: `auto` uses markdown whenever the platform renders it faithfully (tables excepted, since QQ does not render them, and those fall back to plain text), `always` forces it, `never` converts everything |
+| `enabled` | `false` | Whether the QQ channel connects. Off by default: this plugin puts a machine that can run commands onto a messaging network, so it must be enabled explicitly |
+| `appId` / `appSecret` | empty | Open-platform credentials. `appSecret` is marked secret, so configuration surfaces redact it; either value may also come from the `DSH_QQ_APPID` / `DSH_QQ_APPSECRET` environment variables |
+| `mode` | `closed-agent` | `chat` limits what the agent can do; `closed-agent` grants the full tool set |
+| `ownerOpenId` | empty | The administrator's OpenID. The commands marked "owner only" in the command table (among them `/reset`, `/restart`, `/screen`, `/log`, `/doctor` and `/menu install`) are open to it alone |
+| `allow` / `deny` | empty | Admission and rejection lists (user or group OpenIDs). `deny` is evaluated before `allow` |
+| `allowAllWhenEmpty` | `false` | Whether an empty list admits everyone. The default is no, so with an empty list nobody is admitted |
+| `allowAgentSend` | `true` | Whether the agent may call `qq_send_message` / `qq_reply` on its own initiative |
+| `forwardApprovals` / `forwardQuestions` | `true` | Whether tool approvals and `ask_user_question` prompts are forwarded to QQ |
+| `busyDelivery` | `steer` | How a message that arrives during a turn is delivered; `/steer` and `/queue` override it for a single message |
+| `approvalTimeoutMs` / `questionTimeoutMs` | `300000` (5 minutes) | How long a QQ reply is awaited; on timeout the request is handed back to the desktop to answer |
+| `maxBytes` | `3500` | Byte budget for one QQ message; anything longer is split automatically |
+| `intervalMs` | `1200` | Delay between consecutive QQ messages |
+| `markdownMode` | `auto` | Message encoding: `auto` uses markdown whenever the platform renders it faithfully (tables excepted, since QQ does not render them and those fall back to plain text), `always` forces it, `never` converts everything to plain text |
 | `progressIntervalMs` | `0` (off) | Interval for long-turn progress updates. Every update is a real message and spends send quota |
 | `lowBalanceThreshold` | `5` | Warn once a day below this balance; `0` disables the warning |
 | `workspacePath` | empty | Working directory for new QQ sessions; empty uses the DSH process directory |
 | `agentPreset` | empty | Agent preset used by QQ sessions |
-| `allowAgentSend` | `true` | Whether the agent may send QQ messages on its own |
-| `forwardApprovals` / `forwardQuestions` | `true` | Whether approvals and questions are forwarded to QQ |
 | `restartCommand` | empty | Launcher used by `/restart`; empty adopts `Documents\Start-DeepSeek-Harness.cmd` when that file exists |
 
 ## Commands
 
 Send these in QQ. Anything not starting with `/` is delivered to the agent as ordinary input.
 
-**No slash needed.** A whole message that is exactly a command name means that command, case-insensitively: `status`, `usage`, `todos`, `sessions`, `doctor`, `screen`, `log`, `menu`, `help`, `new`, `find`, `model`, `workspace`, `resume`, `stop`, `restart`. Chinese has one word per command and **no synonyms** - a table of alternative spellings is harder to remember than the commands it replaces: `状态`, `额度`, `任务`, `会话`, `继续`, `模型`, `搜索`, `诊断`, `截图`, `日志`, `重启`, `停止`, `新对话`, `重置`, `工作区`, `菜单`, `帮助`. The match is on the entire message, so 「任务完成了」 stays a sentence, and those words work by voice too, since the platform transcribes a voice message into exactly that text - which is the one thing the dropdown cannot do. A leading @-mention is ignored, so `@bot /usage` and 「@bot 状态」 work in a group.
+**No slash needed.** A whole message that is exactly a command name means that command, case-insensitively: `status`, `usage`, `todos`, `sessions`, `doctor`, `screen`, `log`, `menu`, `help`, `new`, `reset`, `find`, `model`, `workspace`, `resume`, `stop`, `restart`. Chinese has one word per command and **no synonyms** - a table of alternative spellings is harder to remember than the commands it replaces: `状态`, `额度`, `任务`, `会话`, `继续`, `模型`, `搜索`, `诊断`, `截图`, `日志`, `重启`, `停止`, `新对话`, `重置`, `工作区`, `菜单`, `帮助`. The match is on the entire message, so 「任务完成了」 stays a sentence, and those words work by voice too, since the platform transcribes a voice message into exactly that text - which is the one thing the dropdown cannot do. A leading @-mention is ignored, so `@bot /usage` and 「@bot 状态」 work in a group.
 
 | Command | Purpose |
 |---|---|
 | `/help` | Show help |
-| `/menu install` | Install or update the platform's **instruction panel** in the `/` picker (owner only): a tap fills the input box with the command; existing panels are refreshed at start-up |
+| `/menu install` | Install or update the platform's **instruction panel** in the `/` picker (owner only): a tap fills the input box with the command, and sending it is still a separate press; existing panels are refreshed at start-up |
 | `/status` | Channel state, bound conversations, open interactions, current model, last send failure, current turn progress |
 | `/model` | List available models by provider, numbered; `←` marks the current one |
 | `/model <n> [effort]` | Switch model (owner only) |
@@ -114,16 +125,16 @@ Send these in QQ. Anything not starting with `/` is delivered to the agent as or
 | `/stop` | Cancel the running turn (owner only; queued messages are kept) |
 | `/steer <text>` | Insert text into the running turn |
 | `/queue <text>` | Queue text for after the current turn |
-| `/workspace` | List registered projects with numbers, and the current directories |
+| `/workspace` | List registered projects with their numbers, and the current working directory |
 | `/workspace <n\|path>` | Switch the working directory for new sessions (owner only) |
 | `/sessions [count]` | List recent sessions with titles, excluding archived ones |
-| `/find <query>` | Search session content; the hits become the current `/resume` listing |
+| `/find <query>` | Search session content; the hits become the current `/resume` listing and can be switched to directly |
 | `/resume <n\|session id>` | Rebind this conversation to an existing session (owner only) |
 | `/usage` | Balances, subscription windows, recent daily spend and remaining days, and today's tokens and cost |
 | `/screen [process]` | Capture the screen and send it here (owner only) |
 | `/log [lines]` | Read the plugin's recent log lines (owner only; 15 by default, 40 at most) |
 | `/doctor` | Actively check the channel, watchdog, credentials, owner, balance, sessions and last send failure (owner only) |
-| `/todos` | Show the agent's task list and progress for the current turn |
+| `/todos` | Show the agent's task list and progress for the current turn (read from DSH's todo projection) |
 | `/restart`, `/restart force` | Restart the DSH process (owner only; `force` is required while a turn is running) |
 
 ## Agent tools
@@ -188,10 +199,10 @@ Platform constraints, all handled by the implementation:
 ## Development
 
 ```bash
-npm test          # 309 unit tests
+npm test          # the full suite
 ```
 
-- The test suite is offline: HTTP, WebSocket and DSH services are injected as doubles
+- The test suite is hermetic and offline: HTTP, WebSocket and DSH services are injected as doubles, so it runs on any platform; Windows is the platform whose failures matter
 - After changing plugin code, send `/restart` in QQ to reload it (the replacement process imports from disk)
 - Please make sure `npm test` passes before committing; CI (`.github/workflows/test.yml`) runs it on Windows against Node 22 and 24
 

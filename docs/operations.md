@@ -42,7 +42,7 @@
 | 回应点击时报 `40034024` | 使用了互动 id 作为 `msg_id`；应使用帧的 event id | `qq/events.js`、`qq/gateway.js` |
 | 报 `40034025 请求参数event_id无效` | 使用了 `d.id` 作为 `event_id`；该值取自事件最外层 id | 同上 |
 | 键盘下发后不显示 | 键盘仅在 markdown 消息（`msg_type: 2`）上渲染 | `bridge/outbound.js` |
-| 图片上传后报 `850019 不支持的文件格式` | 分片偏移不可用 `index × block_size` 计算；线上返回的第一个分片 index 为 1，按该方式计算会切出空分片 | `qq/api.js` |
+| 图片上传后报 `850019 富媒体文件格式不支持` | 分片偏移不可用 `index × block_size` 计算；线上返回的第一个分片 index 为 1，按该方式计算会切出空分片 | `qq/api.js` |
 | 预签名 PUT 被存储端拒绝 | 不可携带 `Authorization` 与 JSON content-type | `qq/api.js` |
 | HTTP 200 但消息未送达 | 响应必须包含 `id` 才视为送达 | `bridge/outbound.js` |
 | 同一条消息被执行两次 | 平台可能重复推送相同的 `msg_id`；桥接按会话记录最近 50 个已处理 id 并丢弃重复项，判断位于准入之后、分发之前 | `bridge/inbound.js` |

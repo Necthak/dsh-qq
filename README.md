@@ -82,25 +82,36 @@ cd dsh-qq && npm install
 
 `deny` 列表在两种模式下均优先于准入判断。
 
-### 主要设置项
+### 设置项
+
+下表与 `lib/index.js` 的配置 schema 一一对应。
 
 | 设置 | 默认值 | 说明 |
 |---|---|---|
+| `enabled` | `false` | 是否连接 QQ 通道。默认关闭：本插件会把一台能执行命令的机器接入消息网络，必须显式开启 |
+| `appId` / `appSecret` | 空 | 开放平台凭据。`appSecret` 标记为 secret，配置界面会打码；也可由环境变量 `DSH_QQ_APPID` / `DSH_QQ_APPSECRET` 提供 |
+| `mode` | `closed-agent` | `chat` 限制 agent 的能力；`closed-agent` 授予完整工具集 |
+| `ownerOpenId` | 空 | 管理员 OpenID。命令表中标注「仅 owner」的命令（含 `/reset`、`/restart`、`/screen`、`/log`、`/doctor`、`/menu install`）只有该 OpenID 可以执行 |
+| `allow` / `deny` | 空 | 放行与拒绝名单（用户或群 OpenID）。`deny` 先于 `allow` 判定 |
+| `allowAllWhenEmpty` | `false` | 名单为空时是否放行所有人。默认否，即名单为空时无人可用 |
+| `allowAgentSend` | `true` | 是否允许 agent 主动调用 `qq_send_message` / `qq_reply` |
+| `forwardApprovals` / `forwardQuestions` | `true` | 是否将工具审批与 `ask_user_question` 转发至 QQ |
 | `busyDelivery` | `steer` | 运行中收到消息的投递方式；单条消息可用 `/steer`、`/queue` 覆盖 |
+| `approvalTimeoutMs` / `questionTimeoutMs` | `300000`（5 分钟） | 等待 QQ 回复的时限，超时后交回桌面应答 |
+| `maxBytes` | `3500` | 单条 QQ 消息的字节预算，超出自动分块 |
+| `intervalMs` | `1200` | 相邻两条 QQ 消息之间的间隔 |
 | `markdownMode` | `auto` | 消息编码：`auto` 在平台能忠实渲染时使用 markdown（表格除外，QQ 不渲染表格，会退回纯文本），`always` 强制，`never` 全部转纯文本 |
 | `progressIntervalMs` | `0`（关闭） | 长回合进度推送间隔。每条推送均为真实消息，会消耗发送额度 |
 | `lowBalanceThreshold` | `5` | 余额低于此值时每日提醒一次；`0` 表示关闭 |
 | `workspacePath` | 空 | QQ 新建会话的工作目录；为空时使用 DSH 进程目录 |
 | `agentPreset` | 空 | QQ 会话使用的 agent preset |
-| `allowAgentSend` | `true` | 是否允许 agent 主动发送 QQ 消息 |
-| `forwardApprovals` / `forwardQuestions` | `true` | 是否将审批与提问转发至 QQ |
 | `restartCommand` | 空 | `/restart` 使用的启动器路径；为空时仅在 `Documents\Start-DeepSeek-Harness.cmd` 存在时采用 |
 
 ## 命令
 
 在 QQ 中直接发送以下命令。未以 `/` 开头的消息将作为普通输入投递给 agent。
 
-**不打斜杠也可以。** 整条消息恰为命令名本身时即为该命令，**大小写不敏感**：`status`、`usage`、`todos`、`sessions`、`doctor`、`screen`、`log`、`menu`、`help`、`new`、`find`、`model`、`workspace`、`resume`、`stop`、`restart`。中文各有一个对应词，**一词一命令、不设同义词**（同义词表比命令本身更难记）：`状态`、`额度`、`任务`、`会话`、`继续`、`模型`、`搜索`、`诊断`、`截图`、`日志`、`重启`、`停止`、`新对话`、`重置`、`工作区`、`菜单`、`帮助`。匹配要求**整条消息完全相同**，所以「任务完成了」不会被当成命令；这些词也可以**用语音说**，平台会转写成同样的文本（下拉面板点不了语音，这是它俩的主要区别）。**消息开头的 @ 提及会被忽略**，所以群里 `@机器人 /usage` 与「@机器人 状态」同样有效。
+**不打斜杠也可以。** 整条消息恰为命令名本身时即为该命令，**大小写不敏感**：`status`、`usage`、`todos`、`sessions`、`doctor`、`screen`、`log`、`menu`、`help`、`new`、`reset`、`find`、`model`、`workspace`、`resume`、`stop`、`restart`。中文各有一个对应词，**一词一命令、不设同义词**（同义词表比命令本身更难记）：`状态`、`额度`、`任务`、`会话`、`继续`、`模型`、`搜索`、`诊断`、`截图`、`日志`、`重启`、`停止`、`新对话`、`重置`、`工作区`、`菜单`、`帮助`。匹配要求**整条消息完全相同**，所以「任务完成了」不会被当成命令；这些词也可以**用语音说**，平台会转写成同样的文本（下拉面板点不了语音，这是它俩的主要区别）。**消息开头的 @ 提及会被忽略**，所以群里 `@机器人 /usage` 与「@机器人 状态」同样有效。
 
 | 命令 | 说明 |
 |---|---|
@@ -187,10 +198,10 @@ bridge/         准入 · 投递 · 会话表 · 出站队列 · 挂起交互 ·
 ## 开发
 
 ```bash
-npm test          # 309 个单元测试
+npm test          # 全部单元测试
 ```
 
-- 测试全程离线：HTTP、WebSocket 与 DSH 服务均以替身注入
+- 测试全程离线、自足：HTTP、WebSocket 与 DSH 服务均以替身注入，因此可在任意平台运行；真正需要把关的平台是 Windows
 - 插件代码改动后，可在 QQ 中发送 `/restart` 重新加载（新进程自磁盘导入）
 - 提交前请确保 `npm test` 全部通过；CI（`.github/workflows/test.yml`）会在 Windows 上以 Node 22 与 24 各跑一遍
 
