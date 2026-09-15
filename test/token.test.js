@@ -1,4 +1,23 @@
 import { test } from 'node:test'
+
+/**
+ * Hold the event loop open while a test waits on a deadline.
+ *
+ * `AbortSignal.timeout` uses an unref'd timer, so on its own it does not keep
+ * the process alive. A CI matrix job runs one file per process, and on Node 22
+ * the process exited before the deadline fired, so the runner reported the test
+ * and every test after it in that file as cancelled. Nothing had failed; the run
+ * was simply over. A referenced timer removes the dependence on whatever else
+ * happens to be running.
+ *
+ * @param ms - how long to hold it, comfortably longer than the deadline.
+ * @returns A function that releases the loop.
+ */
+function holdLoop(ms = 2_000) {
+  const handle = setTimeout(() => {}, ms)
+  return () => clearTimeout(handle)
+}
+
 import assert from 'node:assert/strict'
 
 import { QqTokenProvider, QqTokenError, parseExpiresIn, REFRESH_MARGIN_MS } from '../lib/qq/token.js'
@@ -123,5 +142,10 @@ test('a stalled token request is abandoned rather than blocking everything', asy
     signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
   })
   const tokens = new QqTokenProvider({ appId: '1', clientSecret: 's', fetchImpl, log: () => {} })
-  await assert.rejects(() => tokens.get(), /failed|abort/i)
+  const release = holdLoop()
+  try {
+    await assert.rejects(() => tokens.get(), /failed|abort/i)
+  } finally {
+    release()
+  }
 })

@@ -1,4 +1,23 @@
 import { test } from 'node:test'
+
+/**
+ * Hold the event loop open while a test waits on a deadline.
+ *
+ * `AbortSignal.timeout` uses an unref'd timer, so on its own it does not keep
+ * the process alive. A CI matrix job runs one file per process, and on Node 22
+ * the process exited before the deadline fired, so the runner reported the test
+ * and every test after it in that file as cancelled. Nothing had failed; the run
+ * was simply over. A referenced timer removes the dependence on whatever else
+ * happens to be running.
+ *
+ * @param ms - how long to hold it, comfortably longer than the deadline.
+ * @returns A function that releases the loop.
+ */
+function holdLoop(ms = 2_000) {
+  const handle = setTimeout(() => {}, ms)
+  return () => clearTimeout(handle)
+}
+
 import assert from 'node:assert/strict'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -280,9 +299,14 @@ test('a preflight that cannot finish is refused rather than waited on forever', 
     on: () => {},
     kill: () => {},
   })
-  const result = await verifyPluginLoads({ entryPath: 'C:/plugin/lib/index.js', spawnImpl, timeoutMs: 30 })
-  assert.equal(result.ok, false)
-  assert.match(result.error, /自检超时/)
+  const release = holdLoop()
+  try {
+    const result = await verifyPluginLoads({ entryPath: 'C:/plugin/lib/index.js', spawnImpl, timeoutMs: 30 })
+    assert.equal(result.ok, false)
+    assert.match(result.error, /自检超时/)
+  } finally {
+    release()
+  }
 })
 
 test('condensing keeps the first meaningful lines and bounds the length', () => {
