@@ -141,7 +141,10 @@ test('a stalled token request is abandoned rather than blocking everything', asy
     if (signal === undefined) return
     signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
   })
-  const tokens = new QqTokenProvider({ appId: '1', clientSecret: 's', fetchImpl, log: () => {} })
+  // The real deadline is thirty seconds; a test that waits for it either takes
+  // that long or, where the unref'd timer is the only handle left, never reaches
+  // it at all. Injecting a short one keeps the test about the behaviour.
+  const tokens = new QqTokenProvider({ appId: '1', clientSecret: 's', fetchImpl, log: () => {}, timeoutMs: 20 })
   const release = holdLoop()
   try {
     await assert.rejects(() => tokens.get(), /failed|abort/i)
