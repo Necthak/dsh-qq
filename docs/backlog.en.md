@@ -15,9 +15,9 @@ This document records work that has been agreed but not carried out, parts known
 
 ## Known unfinished
 
-- **Push and release.** The current batch of commits (including `.github/workflows/test.yml`) has not been pushed, and pushing it requires a token with the `workflow` scope. The `v0.1.0` tag exists locally and points at a commit inside the batch; it and its commit are both unpushed. Once the batch is pushed, the tag should be moved to the release commit and given proper release notes.
-- **The public commit history.** The batch history still contains whole-file diffs left behind by a line-ending conversion (line endings in the repository are now LF throughout). If the public history should be as clean, the batch can be squashed into a few commits, one per feature.
-- **Live verification.** The following have no recorded complete pass on real hardware: markdown rendering (the earlier A/B was invalidated by a horizontal rule being read as a table; see the [design and implementation notes](design-notes.en.md)), an actual `/find` search, and the first real run of `/doctor`.
+- **The published commit history.** The batch behind `v0.2.0` still contains whole-file diffs from a line-ending conversion, and several commits that only fix the commit before them (line endings inside the repository are now uniformly LF, declared in `.gitattributes`). Tidying it would mean squashing that batch into a few commits grouped by feature, before the next release.
+- **Live verification.** Verified so far: markdown rendering (the A2/B2 comparison, see the [design notes](design-notes.en.md)), table rewriting, a real `/find` search, duplicate-message suppression, and button-based questions. Not yet recorded as passing: the first `/doctor` run, `/todos`, and the Chinese shortcut words and the `/` dropdown panel in a group chat.
+- **One publishing constraint (resolved, recorded here).** The repository's deploy key **cannot push** files under `.github/workflows/`; GitHub refuses with a missing `workflow` scope. The workaround is to add a key temporarily as an **account-level SSH key**, since a user identity may push them, and to remove it after the release. The device flow cannot be completed on this machine at all: `github.com:443` is unreachable here and only SSH gets through.
 
 ## Known issues
 
