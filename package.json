@@ -1,6 +1,6 @@
 {
   "name": "dsh-qq",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "QQ official bot bridge for DeepSeek Harness: QQ messages become DSH agent prompts, and agent replies, approvals, and questions travel back to QQ.",
   "type": "module",

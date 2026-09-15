@@ -25,7 +25,7 @@ import { createInboundHandler } from '../lib/bridge/inbound.js'
 import { createSessionCommands, formatDoctor, formatPanelInstall, formatTodos, sessionLabel } from '../lib/bridge/commands.js'
 import { PANEL_ITEM_LIMIT, PANEL_REMARK, installPanels, panelItems } from '../lib/bridge/panel.js'
 import { COMMAND_ALIASES, COMMAND_NAMES } from '../lib/bridge/inbound.js'
-import { burnRate, compactNumber, currencySign, dayKey, daysRemaining, formatCreditReport, lowBalances, lowestBalance } from '../lib/bridge/credit.js'
+import { burnRate, compactNumber, currencySign, dayKey, daysRemaining, formatCreditReport, formatWindowAlert, lowBalances, lowestBalance, windowAlerts } from '../lib/bridge/credit.js'
 import { Outbound } from '../lib/bridge/outbound.js'
 import { registerQuestionAnswerer } from '../lib/bridge/questions.js'
 import { registerApprovalAnswerer } from '../lib/bridge/approvals.js'
@@ -877,6 +877,44 @@ test('the balance warning is off at threshold zero and silent when nothing is lo
   assert.deepEqual(lowBalances(snapshots, 5), [], 'a healthy balance says nothing')
   assert.deepEqual(lowBalances(null, 5), [])
   assert.deepEqual(lowBalances({ providers: { a: { displayName: 'A', balance: { currency: 'CNY', totalBalance: 'not a number' } } } }, 5), [])
+})
+
+test('a plan window at or above the threshold is named with its fill and reset', () => {
+  // The plan window, not the balance, is what stops a subscription account, and
+  // the snapshot already computes the percentage the desktop shows.
+  const snapshots = { providers: {
+    'opencode-go': { displayName: 'opencode-go', plan: { windows: [
+      { key: '5h', percent: 12, resetsAt: '2026-09-20T00:00:00.000Z' },
+      { key: 'week', percent: 92, resetsAt: '2026-09-20T08:30:00.000Z' },
+      { key: 'month', percent: 80 },
+    ] } },
+    kimi: { displayName: 'kimi', plan: { windows: [{ key: 'day', percent: 40 }] } },
+    silent: { displayName: 'silent' },
+  } }
+  const alerts = windowAlerts(snapshots, 80)
+  assert.deepEqual(alerts.map((alert) => `${alert.name}/${alert.label}/${String(alert.percent)}`), [
+    'opencode-go/本周/92',
+    'opencode-go/本月/80',
+  ], 'only the windows at or above the threshold, and the unknown key keeps its raw name')
+  assert.equal(alerts[0].resetsAt, '2026-09-20T08:30:00.000Z', 'the reset time travels with the window')
+  assert.equal(alerts[1].resetsAt, '', 'a window with no reset time reports none rather than a guess')
+
+  assert.deepEqual(windowAlerts(snapshots, 0), [], 'zero disables the check')
+  assert.deepEqual(windowAlerts(snapshots, 93), [], 'a healthy window says nothing')
+  assert.deepEqual(windowAlerts(null, 80), [])
+  assert.deepEqual(windowAlerts({ providers: { a: { displayName: 'A', plan: { windows: [{ key: 'week', percent: 'not a number' }] } } } }, 80), [])
+})
+
+test('the plan-window warning says the window, its fill, its reset and where to look', () => {
+  const body = formatWindowAlert(windowAlerts({ providers: { p: { displayName: 'P', plan: { windows: [
+    { key: 'week', percent: 92, resetsAt: '2026-09-20T08:30:00' },
+    { key: '5h', percent: 80 },
+  ] } } } }, 80))
+  assert.match(body, /P 本周 已用 92%（09-20 08:30 重置）/)
+  assert.match(body, /P 5 小时 已用 80%（重置时间未知）/, 'an unknown reset is admitted, not invented')
+  assert.match(body, /\/usage/, 'the detail lives in /usage, and the warning says so')
+  assert.equal(formatWindowAlert([]), '', 'nothing to report means nothing is sent')
+  assert.equal(formatWindowAlert(null), '')
 })
 
 test('the burn rate counts real money only, and skips days with no entry', () => {

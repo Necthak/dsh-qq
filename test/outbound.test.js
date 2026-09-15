@@ -1,19 +1,24 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { SessionMap } from '../lib/bridge/sessions.js'
 import { Outbound, TurnCollector, canRenderAsMarkdown, extractText } from '../lib/bridge/outbound.js'
+import { splitByBytes } from '../lib/md-to-plain.js'
 import { MSG_TYPE } from '../lib/qq/api.js'
 
 /** A fake OpenAPI client that records every send body. */
-function fakeApi({ failOnce = null } = {}) {
+function fakeApi({ failOnce = null, uploadFails = false, mediaFails = false } = {}) {
   const sent = []
+  const uploads = []
+  const media = []
   let failures = failOnce === null ? 0 : 1
   return {
     sent,
+    uploads,
+    media,
     async sendC2C(openid, body) {
       if (failures > 0) {
         failures -= 1
@@ -30,15 +35,27 @@ function fakeApi({ failOnce = null } = {}) {
       sent.push({ kind: 'group', openid, body })
       return { ok: true }
     },
+    // The upload is recorded before it can fail, so a test can still name the
+    // temp file the bridge was supposed to remove.
+    async uploadFile(kind, peerId, { data, fileName }) {
+      uploads.push({ kind, peerId, data, fileName })
+      if (uploadFails) throw new Error('upload refused')
+      return 'FILE_INFO'
+    },
+    async sendFile(kind, peerId, fileInfo) {
+      media.push({ kind, peerId, fileInfo })
+      if (mediaFails) throw new Error('media send refused')
+      return { ok: true }
+    },
   }
 }
 
-function harness(config = {}, { failOnce = null } = {}) {
+function harness(config = {}, { failOnce = null, uploadFails = false, mediaFails = false } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-qq-out-'))
   const sessions = new SessionMap({ path: join(dir, 'sessions.json'), log: () => {} })
   sessions.bind('private:U1', 'sess_a')
   sessions.bind('group:G1', 'sess_g')
-  const api = fakeApi({ failOnce })
+  const api = fakeApi({ failOnce, uploadFails, mediaFails })
   const outbound = new Outbound({
     api,
     sessions,
@@ -48,6 +65,11 @@ function harness(config = {}, { failOnce = null } = {}) {
     config: () => ({ intervalMs: 0, maxBytes: 3_500, markdownMode: 'never', ...config }),
   })
   return { api, sessions, outbound, cleanup: () => rmSync(dir, { recursive: true, force: true }) }
+}
+
+/** The body of a recorded send, whichever content field it carries. */
+function bodyText(entry) {
+  return entry.body.content ?? entry.body.markdown?.content ?? ''
 }
 
 test('a short answer is sent as one passive reply carrying msg_id and msg_seq', async () => {
@@ -348,4 +370,123 @@ test('a delimiter row under a row of cells is still a table', () => {
   assert.equal(canRenderAsMarkdown('| 项 | 值 |\n| --- | --- |\n| a | 1 |'), false)
   assert.equal(canRenderAsMarkdown('项 | 值\n--- | ---\n1 | 2'), false, 'outer pipes are optional')
   assert.equal(canRenderAsMarkdown('路径 a | b 是管道符'), true, 'a pipe in a sentence is not a table')
+})
+
+test('a quoted reply sends its chunks, having no keyboard in scope', async () => {
+  // `sendQuoted` prepared its text with an identifier that does not exist in its
+  // scope, so every `qq_reply` call threw a ReferenceError before sending
+  // anything. The tool tests could not see it: their sender is a double.
+  const h = harness({ markdownMode: 'never' })
+  try {
+    await h.outbound.sendQuoted({ key: 'private:U1', kind: 'private', peerId: 'U1', text: '收到', msgId: 'msg_9', msgSeq: 1 })
+    assert.equal(h.api.sent.length, 1)
+    assert.equal(h.api.sent[0].body.content, '收到')
+    assert.equal(h.api.sent[0].body.msg_id, 'msg_9', 'the quote still rides on the first chunk')
+  } finally {
+    h.cleanup()
+  }
+})
+
+// ── a long answer becomes one message and one file ──────────────────────────
+
+/**
+ * Build a body of numbered lines.
+ *
+ * At the fixture's 200-byte budget ten of these lines fill one chunk, so 40
+ * lines sit exactly on a limit of 4 and 60 exceed it.
+ *
+ * @param count - how many lines.
+ * @returns The body.
+ */
+function numberedLines(count) {
+  return Array.from({ length: count }, (_, index) => `第 ${String(index)} 行的内容`).join(String.fromCharCode(10))
+}
+
+test('an answer beyond the chunk limit is sent as its opening plus one .md file', async () => {
+  // Measured on the deployment: a long answer exhausts the passive window
+  // ("passive reply window spent" in the log), the rest then spends the active
+  // quota, and with active messages switched off the tail is lost outright.
+  // One file card is a single send.
+  const h = harness({ maxBytes: 200, longAnswerChunks: 4, markdownMode: 'always' })
+  try {
+    h.sessions.setReplyTarget('private:U1', 'msg_1')
+    const text = numberedLines(60)
+    assert.ok(splitByBytes(text, 200).length > 4, 'the fixture must exceed the limit')
+    await h.outbound.deliver({ key: 'private:U1', kind: 'private', peerId: 'U1', text })
+
+    assert.equal(h.api.sent.length, 1, 'one message, not one per chunk')
+    assert.equal(h.api.sent[0].body.msg_id, 'msg_1', 'it still takes the passive reply slot')
+    const opening = bodyText(h.api.sent[0])
+    assert.match(opening, /^第 0 行的内容/, 'the opening carries the start of the answer')
+    assert.ok(Buffer.byteLength(opening, 'utf8') <= 200, 'the notice must not push the opening over the limit')
+
+    assert.equal(h.api.uploads.length, 1)
+    const upload = h.api.uploads[0]
+    assert.match(upload.fileName, /\.md$/, 'the file is markdown')
+    assert.equal(upload.data.toString('utf8'), text, 'the file carries the complete text, not the chunks')
+    assert.match(opening, new RegExp(upload.fileName), 'the reader is told which file to open')
+    assert.match(opening, /完整内容已作为文件发送/, 'and told that the rest is in it')
+    assert.equal(h.api.media.length, 1, 'the file card is what actually reaches QQ')
+    assert.equal(existsSync(join(tmpdir(), upload.fileName)), false, 'the temp file is removed after the send')
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('a failed upload falls back to sending every chunk rather than losing the answer', async () => {
+  const h = harness({ maxBytes: 200, longAnswerChunks: 4, markdownMode: 'always' }, { uploadFails: true })
+  try {
+    const text = numberedLines(60)
+    await h.outbound.deliver({ key: 'private:U1', kind: 'private', peerId: 'U1', text })
+
+    assert.equal(h.api.uploads.length, 1, 'the upload was attempted')
+    assert.equal(h.api.media.length, 0, 'and did not produce a file card')
+    assert.equal(existsSync(join(tmpdir(), h.api.uploads[0].fileName)), false, 'the temp file goes even when the send fails')
+    assert.ok(h.api.sent.length > 4, 'every chunk is sent instead')
+    assert.match(h.api.sent.map(bodyText).join('\n'), /第 59 行的内容/, 'including the end of the answer')
+    assert.equal(h.outbound.lastFailure, null, 'a delivery that succeeded is not recorded as a failure')
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('an answer at the limit is still chunked, and zero turns the file path off', async () => {
+  const text = numberedLines(40)
+  assert.equal(splitByBytes(text, 200).length, 4, 'the fixture sits exactly on the limit')
+
+  const atLimit = harness({ maxBytes: 200, longAnswerChunks: 4 })
+  try {
+    await atLimit.outbound.sendActive({ key: 'private:U1', kind: 'private', peerId: 'U1', text })
+    assert.equal(atLimit.api.sent.length, 4, 'the limit is "more than", not "at least"')
+    assert.equal(atLimit.api.uploads.length, 0)
+  } finally {
+    atLimit.cleanup()
+  }
+
+  const disabled = harness({ maxBytes: 200, longAnswerChunks: 0 })
+  try {
+    await disabled.outbound.sendActive({ key: 'private:U1', kind: 'private', peerId: 'U1', text })
+    assert.equal(disabled.api.sent.length, 4)
+    assert.equal(disabled.api.uploads.length, 0, 'zero disables the file path')
+  } finally {
+    disabled.cleanup()
+  }
+})
+
+test('a file card that cannot be sent also falls back, and leaves no temp file behind', async () => {
+  // The send endpoint can fail after a successful upload. Nothing was delivered
+  // then, so the chunks are still safe to send — and the opening must not claim
+  // a file that never arrived.
+  const h = harness({ maxBytes: 200, longAnswerChunks: 4 }, { mediaFails: true })
+  try {
+    const text = numberedLines(60)
+    await h.outbound.deliver({ key: 'private:U1', kind: 'private', peerId: 'U1', text })
+    assert.equal(h.api.uploads.length, 1)
+    assert.equal(h.api.media.length, 1, 'the card was attempted')
+    assert.equal(existsSync(join(tmpdir(), h.api.uploads[0].fileName)), false)
+    assert.ok(h.api.sent.length > 4, 'the answer still arrives as chunks')
+    assert.doesNotMatch(h.api.sent.map(bodyText).join('\n'), /完整内容已作为文件发送/, 'and nothing claims otherwise')
+  } finally {
+    h.cleanup()
+  }
 })

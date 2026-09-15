@@ -118,6 +118,24 @@ A message carrying a keyboard is always markdown, because buttons render only on
 
 The decision leaves a trace: every send records the encoding it used, and a fallback to plain text records its reason as well. Without that, "why did that one arrive flat" cannot be answered after the fact.
 
+## Long answers become a file
+
+A measurement on the live deployment decides this rule: a long answer exhausts the passive reply window partway through (`passive reply window spent` recurs in the log), after which every chunk consumes the active-message quota instead. If the operator has switched active messages off in the QQ client, the remaining chunks cannot be sent at all - the second half of the answer is lost, and nothing on the QQ side records that it happened.
+
+An answer that would be split into **more than** `longAnswerChunks` chunks (4 by default, `0` disables) is therefore sent as **its opening chunk plus the complete text as one `.md` file**, and nothing else. The trigger counts chunks rather than bytes because the cost is counted in messages: the passive window expires by count and by time, and the active quota is charged per message.
+
+Five implementation details:
+
+1. **The file goes first, the message second.** The message carrying the opening says "the complete content has been sent as a file", and that is true only once the file card is already there.
+2. **The opening must give up room for the notice.** The notice follows the first chunk. Splitting to `maxBytes` first and appending afterwards would produce exactly the over-long message the split exists to prevent, so the file path re-splits at `maxBytes` minus the notice's byte length and takes only the first piece.
+3. **The file is written under the OS temp directory and removed on every path.** The temp directory is the one location that can be assumed writable; a file leaked per long answer would fill it on a deployment that runs for months.
+4. **A failed upload falls back to sending every chunk.** Because the file goes first, an upload failure means nothing has been sent yet, which is what makes the fallback safe: more messages are better than a lost answer. A send endpoint that fails after a successful upload belongs to the same case - the file card never arrived, so the fallback cannot duplicate anything, and the message carrying the opening never claims a file that is not there.
+5. **A keyboarded message is no exception.** The single message is the opening chunk, so the buttons ride on it; a keyboard already forces markdown, which is independent of the file's extension.
+
+The file's body is exactly the prepared body the chunks were cut from: even when `markdownMode: never`, or a table, sends the messages as plain text, the file holds the same content, so the file and the messages cannot contradict each other. The extension stays `.md` regardless of that encoding decision.
+
+`sendQuoted` (the `qq_reply` tool's quoted reply) does not take this path: it quotes a specific inbound message by `msg_id`, which is a different route. It used to prepare its text with `this.#prepare(text, keyboard, key)`, where `keyboard` does not exist in that scope - every call threw a `ReferenceError` before sending anything. The tool tests could not see it, because the sender they inject is a double.
+
 ## When a line of text is a table
 
 A table exists only where **a delimiter row sits directly beneath a row of cells**, and both lines must carry a pipe. `readTable` requires the candidate header row to start and end with `|`, the next line to be a delimiter row, and at least one body row after it; `canRenderAsMarkdown` applies the same condition to decide whether a piece of text contains a table.

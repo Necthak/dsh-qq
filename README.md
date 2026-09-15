@@ -99,10 +99,12 @@ cd dsh-qq && npm install
 | `busyDelivery` | `steer` | 运行中收到消息的投递方式；单条消息可用 `/steer`、`/queue` 覆盖 |
 | `approvalTimeoutMs` / `questionTimeoutMs` | `300000`（5 分钟） | 等待 QQ 回复的时限，超时后交回桌面应答 |
 | `maxBytes` | `3500` | 单条 QQ 消息的字节预算，超出自动分块 |
+| `longAnswerChunks` | `4` | 回答超过此段数时改为「首段消息 + 完整 `.md` 文件」；`0` 表示关闭，仍逐段发送 |
 | `intervalMs` | `1200` | 相邻两条 QQ 消息之间的间隔 |
 | `markdownMode` | `auto` | 消息编码：`auto` 在平台能忠实渲染时使用 markdown（表格除外，QQ 不渲染表格，会退回纯文本），`always` 强制，`never` 全部转纯文本 |
 | `progressIntervalMs` | `0`（关闭） | 长回合进度推送间隔。每条推送均为真实消息，会消耗发送额度 |
 | `lowBalanceThreshold` | `5` | 余额低于此值时每日提醒一次；`0` 表示关闭 |
+| `planAlertPercent` | `80` | 套餐窗口用量达到此百分比时每日提醒一次；`0` 表示关闭 |
 | `workspacePath` | 空 | QQ 新建会话的工作目录；为空时使用 DSH 进程目录 |
 | `agentPreset` | 空 | QQ 会话使用的 agent preset |
 | `restartCommand` | 空 | `/restart` 使用的启动器路径；为空时仅在 `Documents\Start-DeepSeek-Harness.cmd` 存在时采用 |
@@ -117,7 +119,7 @@ cd dsh-qq && npm install
 |---|---|
 | `/help` | 显示帮助 |
 | `/menu install` | 安装或更新 `/` 下拉选择器里的**平台指令面板**（仅 owner）：点一项会把命令填进输入框，再按发送；每次启动会自动刷新已有面板 |
-| `/status` | 通道状态、已绑定会话数、待应答交互数、当前模型、最近一次发送失败、当前回合进度 |
+| `/status` | 通道状态、已绑定会话数、待应答交互数、当前模型、最近一次发送失败、当前回合进度、本会话的定时提醒 |
 | `/model` | 列出可用模型（按提供方分组并编号），`←` 标记当前模型 |
 | `/model <编号> [强度]` | 切换模型（仅 owner） |
 | `/new`、`/reset` | 新建对话（仅 owner）。原对话保留，可通过 `/sessions` 与 `/resume` 返回 |

@@ -6,7 +6,7 @@ import { join } from 'node:path'
 
 import { SessionMap } from '../lib/bridge/sessions.js'
 import { PendingInteractions } from '../lib/bridge/pending.js'
-import { COMMAND_NAMES, createInboundHandler, shortcutCommand } from '../lib/bridge/inbound.js'
+import { COMMAND_NAMES, createInboundHandler, formatReminders, shortcutCommand } from '../lib/bridge/inbound.js'
 import { createSessionCommands } from '../lib/bridge/commands.js'
 
 /** A normalized private message. */
@@ -30,7 +30,7 @@ function message(overrides = {}) {
   }
 }
 
-function harness({ settings = {}, promptFails = false, busy } = {}) {
+function harness({ settings = {}, promptFails = false, busy, reminders } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-qq-in-'))
   const sessions = new SessionMap({ path: join(dir, 'sessions.json'), log: () => {} })
   const prompts = []
@@ -64,6 +64,7 @@ function harness({ settings = {}, promptFails = false, busy } = {}) {
     fetchImpl: async () => { throw new Error('no network expected') },
     status: () => ({ gateway: 'online', conversations: 1, pending: 0 }),
     busy,
+    reminders,
     signal: controller.signal,
   })
 
@@ -378,6 +379,89 @@ test('/status answers the delivery question before a session exists', async () =
     assert.match(h.sent[0].text, /当前回合：尚未创建/)
   } finally {
     h.cleanup()
+  }
+})
+
+test('/status lists the session’s scheduled reminders and when they fire', async () => {
+  const asked = []
+  const h = harness({
+    reminders: async (sessionId) => {
+      asked.push(sessionId)
+      return [
+        { id: 'schedule-1', kind: 'at', prompt: '检查部署结果', scheduledAt: '2099-09-14T09:30:00' },
+        { id: 'schedule-2', kind: 'every', prompt: '每小时巡检', everySeconds: 3600, scheduledAt: '2099-09-14T10:00:00' },
+      ]
+    },
+  })
+  try {
+    await h.handler(message())
+    await h.handler(message({ text: '/status' }))
+    const body = h.sent.at(-1).text
+    assert.deepEqual(asked, ['sess_1'], 'the reminders belong to the bound session')
+    assert.match(body, /定时提醒：2 条/)
+    assert.match(body, /· 检查部署结果（09-14 09:30）/)
+    assert.match(body, /· 每 1 小时 · 每小时巡检（09-14 10:00）/, 'a fixed rate says how often it comes back')
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('an unreadable reminder record is admitted as unknown, never guessed at', () => {
+  // The record shape belongs to DSH's schedule plugin, so a field that is
+  // missing or of the wrong type must degrade to "unknown" rather than throw or
+  // produce a made-up firing time.
+  assert.deepEqual(formatReminders([
+    { kind: 'at', prompt: '复查结果', scheduledAt: '2026-09-14T09:30:00' },
+    { kind: 'every', prompt: '巡检', everySeconds: 300, scheduledAt: '2026-09-14T10:00:00' },
+    { kind: 'at' },
+    { kind: 'every', prompt: '间隔不可读', everySeconds: 'soon', scheduledAt: 'not a date' },
+  ], new Date('2026-09-14T12:00:00')), [
+    '定时提醒：4 条',
+    '· 复查结果（09-14 09:30 · 已到期）',
+    '· 每 5 分钟 · 巡检（09-14 10:00 · 已到期）',
+    '· （未记录内容）（时间未知）',
+    '· 间隔不可读（时间未知）',
+  ])
+})
+
+test('a deployment without the schedule projection adds no line at all', async () => {
+  // The projection is absent when DSH's schedule plugin is not mounted, which
+  // is a fact about the deployment rather than an error about this session.
+  assert.deepEqual(formatReminders(null), [])
+  assert.deepEqual(formatReminders(undefined), [])
+  assert.deepEqual(formatReminders('nonsense'), [])
+
+  const h = harness({ reminders: async () => null })
+  try {
+    await h.handler(message())
+    await h.handler(message({ text: '/status' }))
+    const body = h.sent.at(-1).text
+    assert.doesNotMatch(body, /定时提醒/)
+    assert.match(body, /DSH 会话：sess_1/, 'the rest of the status answer is unaffected')
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('an empty reminder set says so, and a failing read is not shown as an error', async () => {
+  const empty = harness({ reminders: async () => [] })
+  try {
+    await empty.handler(message())
+    await empty.handler(message({ text: '/status' }))
+    assert.match(empty.sent.at(-1).text, /定时提醒：无/)
+  } finally {
+    empty.cleanup()
+  }
+
+  const broken = harness({ reminders: async () => { throw new Error('projection exploded') } })
+  try {
+    await broken.handler(message())
+    await broken.handler(message({ text: '/status' }))
+    const body = broken.sent.at(-1).text
+    assert.doesNotMatch(body, /projection exploded/, 'the session is not blamed for a broken projection')
+    assert.match(body, /📊 状态/, 'and the answer is still delivered')
+  } finally {
+    broken.cleanup()
   }
 })
 

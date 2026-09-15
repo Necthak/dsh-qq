@@ -99,10 +99,12 @@ The table below corresponds one-to-one with the configuration schema in `lib/ind
 | `busyDelivery` | `steer` | How a message that arrives during a turn is delivered; `/steer` and `/queue` override it for a single message |
 | `approvalTimeoutMs` / `questionTimeoutMs` | `300000` (5 minutes) | How long a QQ reply is awaited; on timeout the request is handed back to the desktop to answer |
 | `maxBytes` | `3500` | Byte budget for one QQ message; anything longer is split automatically |
+| `longAnswerChunks` | `4` | Beyond this many chunks an answer is sent as its opening message plus one `.md` file; `0` disables that and sends every chunk |
 | `intervalMs` | `1200` | Delay between consecutive QQ messages |
 | `markdownMode` | `auto` | Message encoding: `auto` uses markdown whenever the platform renders it faithfully (tables excepted, since QQ does not render them and those fall back to plain text), `always` forces it, `never` converts everything to plain text |
 | `progressIntervalMs` | `0` (off) | Interval for long-turn progress updates. Every update is a real message and spends send quota |
 | `lowBalanceThreshold` | `5` | Warn once a day below this balance; `0` disables the warning |
+| `planAlertPercent` | `80` | Warn once a day when a subscription window has reached this percentage; `0` disables the warning |
 | `workspacePath` | empty | Working directory for new QQ sessions; empty uses the DSH process directory |
 | `agentPreset` | empty | Agent preset used by QQ sessions |
 | `restartCommand` | empty | Launcher used by `/restart`; empty adopts `Documents\Start-DeepSeek-Harness.cmd` when that file exists |
@@ -117,7 +119,7 @@ Send these in QQ. Anything not starting with `/` is delivered to the agent as or
 |---|---|
 | `/help` | Show help |
 | `/menu install` | Install or update the platform's **instruction panel** in the `/` picker (owner only): a tap fills the input box with the command, and sending it is still a separate press; existing panels are refreshed at start-up |
-| `/status` | Channel state, bound conversations, open interactions, current model, last send failure, current turn progress |
+| `/status` | Channel state, bound conversations, open interactions, current model, last send failure, current turn progress, this session's scheduled reminders |
 | `/model` | List available models by provider, numbered; `←` marks the current one |
 | `/model <n> [effort]` | Switch model (owner only) |
 | `/new`, `/reset` | Start a new conversation (owner only). The previous one is kept and can be reached with `/sessions` and `/resume` |

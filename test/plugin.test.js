@@ -10,7 +10,7 @@ const SANDBOX = mkdtempSync(join(tmpdir(), 'dsh-qq-plugin-'))
 process.env.DSH_HOME = SANDBOX
 process.on('exit', () => { rmSync(SANDBOX, { recursive: true, force: true }) })
 
-const { apply, name, inject, SETTINGS_NS, createBusyProbe } = await import('../lib/index.js')
+const { apply, name, inject, SETTINGS_NS, activeReminders, createBusyProbe, createProjectionReader } = await import('../lib/index.js')
 
 /**
  * A stand-in DSH context exposing only the seams the plugin injects.
@@ -245,6 +245,96 @@ test('a config write accepts only writable, well-typed fields', async () => {
   assert.equal(stored.bogus, undefined, 'an unknown field is refused')
   assert.equal(stored.busyDelivery, 'queue', 'the delivery setting must survive the writable-key allowlist')
   assert.equal(stored.appSecret, 'EXISTING', 'an empty secret must not clear the stored one')
+})
+
+test('the two new numeric settings are writable from the settings card', async () => {
+  // The card is the surface an operator actually edits; a setting the schema
+  // knows but the writable list omits silently refuses to save.
+  const h = mockContext()
+  apply(h.ctx)
+  const route = h.routes.find((entry) => entry.path === '/dsh-qq/config')
+
+  const response = captureResponse()
+  await route.handler(
+    { method: 'POST', url: '/dsh-qq/config', ...fakeRequest('{"planAlertPercent":85,"longAnswerChunks":2}') },
+    response.res,
+  )
+
+  assert.equal(response.status, 200)
+  const stored = h.getSettings()
+  assert.equal(stored.planAlertPercent, 85)
+  assert.equal(stored.longAnswerChunks, 2)
+})
+
+test('zero switches a warning off from the card, but stays invalid where it is not a disable', async () => {
+  // The settings table documents `0` as the way to switch these off. Refusing it
+  // silently kept the old value while the save reported success, which is the
+  // one outcome an operator cannot detect.
+  const h = mockContext()
+  apply(h.ctx)
+  const route = h.routes.find((entry) => entry.path === '/dsh-qq/config')
+
+  const response = captureResponse()
+  await route.handler(
+    { method: 'POST', url: '/dsh-qq/config', ...fakeRequest('{"planAlertPercent":0,"longAnswerChunks":0,"lowBalanceThreshold":0,"maxBytes":0,"approvalTimeoutMs":-1}') },
+    response.res,
+  )
+
+  assert.equal(response.status, 200)
+  const stored = h.getSettings()
+  assert.equal(stored.planAlertPercent, 0)
+  assert.equal(stored.longAnswerChunks, 0)
+  assert.equal(stored.lowBalanceThreshold, 0)
+  assert.equal(stored.maxBytes, undefined, 'a byte budget of zero bytes is not a disable')
+  assert.equal(stored.approvalTimeoutMs, undefined, 'nor is a timeout that expires before it is armed')
+})
+
+test('the schedule projection yields its active reminders, or nothing to read', () => {
+  // DSH's schedule plugin folds reminders into the `schedule` projection; a
+  // profile without that plugin reports no such state, and `/status` then says
+  // nothing rather than reporting a missing feature as an error.
+  assert.deepEqual(activeReminders({ inheritedEventCount: 3, active: [{ id: 'schedule-1' }], seenIds: [] }), [{ id: 'schedule-1' }])
+  assert.deepEqual(activeReminders({ active: [] }), [], 'a mounted plugin with no reminders is an answer, not an absence')
+  assert.equal(activeReminders(undefined), null)
+  assert.equal(activeReminders(null), null)
+  assert.equal(activeReminders({}), null)
+  assert.equal(activeReminders({ active: 'nonsense' }), null)
+})
+
+test('the projection reader resolves the session and survives a deployment that cannot answer', async () => {
+  const asked = []
+  const readable = createProjectionReader({
+    ctx: {
+      sessionController: { resolveAgent: async (id) => ({ agent: { session: { id } } }) },
+      get: (service) => (service === 'sessionProjections'
+        ? { stateOf: (session, key) => { asked.push(`${session.id}/${key}`); return { inheritedEventCount: 0, active: [], seenIds: [] } } }
+        : undefined),
+    },
+    log: () => {},
+  })
+  assert.deepEqual(await readable('sess_1', 'schedule'), { inheritedEventCount: 0, active: [], seenIds: [] })
+  assert.deepEqual(asked, ['sess_1/schedule'], 'the projection is read for the session that was asked about')
+
+  // No projection registry: the plugin that registers `schedule` is not mounted.
+  const noRegistry = createProjectionReader({
+    ctx: { sessionController: { resolveAgent: async () => ({ agent: { session: {} } }) }, get: () => undefined },
+    log: () => {},
+  })
+  assert.equal(await noRegistry('sess_1', 'schedule'), undefined)
+
+  // No agent resolver at all, and a resolver that is not thenable: both are
+  // "cannot read", never a guess.
+  assert.equal(createProjectionReader({ ctx: {}, log: () => {} })('sess_1', 'schedule'), null)
+  const synchronous = createProjectionReader({ ctx: { sessionController: { resolveAgent: () => ({ agent: { session: {} } }) } }, log: () => {} })
+  assert.equal(synchronous('sess_1', 'schedule'), null)
+
+  const logged = []
+  const throwing = createProjectionReader({
+    ctx: { sessionController: { resolveAgent: () => { throw new Error('registry exploded') } } },
+    log: (message) => logged.push(message),
+  })
+  assert.equal(throwing('sess_1', 'schedule'), null)
+  assert.match(logged.join('\n'), /schedule projection could not be read.*registry exploded/)
 })
 
 test('unloading disposes every registration', () => {
